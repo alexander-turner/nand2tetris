@@ -64,14 +64,13 @@ CHIP ALU {
 
     // Bitwise not the output? 
     Not16(in=fOut, out=nfOut);
-    Mux16(a=fOut, b=nfOut, sel=no, out=out);
-    Mux16(a=fOut, b=nfOut, sel=no, out=internalOut);
+    // Lol just set the flags on the way out 
+    Mux16(a=fOut, b=nfOut, sel=no, out=out, out[15]=ng, out[0..7]=msb, out[8..15]=lsb);
 
-    // Check if out is zero
-    Or16(in=internalOut, out=orOut);
-    Not(in=orOut, out=zr);
-    
     // Check if negative 
-    Or(a=internalOut[15], b=false, out=ng); // Two's complement, most sign. bit indicates negative
+    Or8Way(in=msb, out=msbOr);
+    Or8Way(in=lsb, out=lsbOr);
+    Or(a=msbOr, b=lsbOr, out=anyNZ);
+    Not(in=anyNZ, out=zr);
 }
 
