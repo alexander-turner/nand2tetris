@@ -41,5 +41,37 @@ CHIP ALU {
         ng;      // if (out < 0)  equals 1, else 0
 
     PARTS:
-    //// Replace this comment with your code.
+    // Handle zx 
+    Not16(in=x, out=notX);
+    And16(a=x, b=notX, out=zero); // x and notx always = false (0)
+    Mux16(a=x, b=zero, sel=zx, out=xZX);
+    
+    // Handle bitwise not 
+    Not16(in=xZX, out=notxZX);
+    Mux16(a=xZX, b=notxZX, sel=nx, out=xNX);
+
+    // Handle yzero 
+    Mux16(a=y, b=zero, sel=zy, out=yZY);
+
+    // Negate y? 
+    Not16(in=yZY, out=notyZY);
+    Mux16(a=yZY, b=notyZY, sel=ny, out=yNY);
+
+    // Which function 
+    Add16(a=xNX, b=yNY, out=xySum);
+    And16(a=xNX, b=yNY, out=xyAnd);
+    Mux16(a=xyAnd, b=xySum, sel=f, out=fOut);
+
+    // Bitwise not the output? 
+    Not16(in=fOut, out=nfOut);
+    Mux16(a=fOut, b=nfOut, sel=no, out=out);
+    Mux16(a=fOut, b=nfOut, sel=no, out=internalOut);
+
+    // Check if out is zero
+    Or16(in=internalOut, out=orOut);
+    Not(in=orOut, out=zr);
+    
+    // Check if negative 
+    Or(a=internalOut[15], b=false, out=ng); // Two's complement, most sign. bit indicates negative
 }
+
