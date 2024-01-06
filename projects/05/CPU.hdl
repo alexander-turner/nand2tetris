@@ -17,11 +17,20 @@
  * instruction's execution during the current cycle. The addressM and pc outputs are
  * clocked: although they are affected by the instruction's execution, they commit to
  * their new values only in the next cycle.
+ * instruction[0]: opcode (0->A, 1->C)
+ * if A: instruction[1:15] specifies address to load into A 
+ * if B:
+ * instructions[1:2]: unused
+ * 3: if 0, feed A->ALU input, otherwise feed inM
+ * 4-9: 6 flags to pass into ALU
+ * 10: ALU->A, 11: ALU->D, 12:ALU->M (load to RAM) 
+ * 13-15 which instructions to fetch next jjj, check PC docs TODO
  */
 CHIP CPU {
 
     IN  inM[16],         // M value input  (M = contents of RAM[A])
         instruction[16], // Instruction for execution
+
         reset;           // Signals whether to restart the current
                          // program (reset==1) or continue executing
                          // the current program (reset==0).
@@ -32,5 +41,41 @@ CHIP CPU {
         pc[15];          // Address of next instruction
 
     PARTS:
-    //// Replace this comment with your code.
+    // Manage the A-register 
+    Not(in=instruction[15], out=isAInstruction); // MSB indicates whether to load directly
+    // If C-code (instruction[15]==1) and the first d-bit is 1, load ALU
+    And(a=instruction[15], b=instruction[5], out=loadALUOutToARegister);
+    Mux16(a=instruction, b=ALUOut, sel=loadALUOutToARegister, out=muxAddressOut);
+
+    Or(a=loadALUOutToARegister, b=isAInstruction, out=loadToA);
+    ARegister(in=muxAddressOut, load=loadToA, out=ARegOut, out[0..14]=addressM);
+
+    // D-register management
+    // If it's an A-instruction, then don't load the ALU output.
+    // instruction[4] controls whether we should write ALU->D 
+    And(a=instruction[4], b=instruction[15], out=loadALUToD);
+    DRegister(in=ALUOut, load=loadALUToD, out=DOut);
+    
+    // ALU management
+    Mux16(a=ARegOut, b=inM, sel=instruction[12], out=ALUin);
+    ALU(x=DOut, y=ALUin, zx=instruction[11], nx=instruction[10], zy=instruction[9], ny=instruction[8], f=instruction[7], no=instruction[6], out=outM, out=ALUOut, zr=ALUOutZero, ng=ALUOutNeg);
+    // Only write if indicated by d-bit, and isn't an A-instruction
+    And(a=instruction[3], b=instruction[15], out=writeM); 
+
+    // Program counter
+    // Figure out whether to jump
+    Not(in=ALUOutNeg, out=ALUOutNonNeg);
+    Not(in=ALUOutZero, out=ALUOutNonZero);
+    And(a=ALUOutNonNeg, b=ALUOutNonZero, out=ALUOutPos);
+
+    // Check that comp < 0 
+    And(a=instruction[2], b=ALUOutNeg, out=JLT);
+    And(a=instruction[1], b=ALUOutZero, out=JEQ);
+    And(a=instruction[0], b=ALUOutPos, out=JGT);
+    Or(a=JLT, b=JEQ, out=JLE);
+    Or(a=JLE, b=JGT, out=preJMP);
+    // Make sure we aren't in an A-instruction 
+    And(a=preJMP, b=instruction[15], out=JMP);
+    Not(in=JMP, out=notJMP);
+    PC(in=ARegOut, load=JMP, inc=notJMP, reset=reset, out[0..14]=pc);
 }

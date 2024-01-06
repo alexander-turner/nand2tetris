@@ -19,5 +19,23 @@ CHIP Memory {
     OUT out[16];
 
     PARTS:
-    //// Replace this comment with your code.
+    // Make 32K ram chip, have outs go to appropriate device 
+    // Check if accessing 16K ram
+    Not(in=address[14], out=accessRAM);
+    And(a=accessRAM, b=load, out=loadRAM);
+    RAM16K(in=in, load=loadRAM, address=address[0..13], out=outRAM); // But how know which part?
+    
+    // Check if accessing Screen (2 MSB are 1 and 0, respectively)
+    Not(in=address[13], out=notKeyboard); 
+    And(a=address[14], b=notKeyboard, out=accessScreen);
+    And(a=accessScreen, b=load, out=loadScreen);
+    Screen(in=in, load=loadScreen, address=address[0..12], out=outScreen);
+
+    And(a=address[14], b=address[13], out=accessKeyboard);
+    // And(a=accessKeyboard, b=load, out=loadKeyboard);
+    Keyboard(out=outKeyboard);
+
+    Mux16(a=outRAM, b=outScreen, sel=accessScreen, out=outMux);
+    Mux16(a=outMux, b=outKeyboard, sel=accessKeyboard, out=out);
+
 }
