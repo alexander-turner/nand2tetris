@@ -17,14 +17,6 @@
  * instruction's execution during the current cycle. The addressM and pc outputs are
  * clocked: although they are affected by the instruction's execution, they commit to
  * their new values only in the next cycle.
- * instruction[0]: opcode (0->A, 1->C)
- * if A: instruction[1:15] specifies address to load into A 
- * if B:
- * instructions[1:2]: unused
- * 3: if 0, feed A->ALU input, otherwise feed inM
- * 4-9: 6 flags to pass into ALU
- * 10: ALU->A, 11: ALU->D, 12:ALU->M (load to RAM) 
- * 13-15 which instructions to fetch next jjj, check PC docs TODO
  */
 CHIP CPU {
 
