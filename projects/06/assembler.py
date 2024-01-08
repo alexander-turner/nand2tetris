@@ -24,14 +24,14 @@ class Parser:
     def has_more_lines(self) -> bool:
         return 0 <= self.current_idx < len(self.lines)
 
+    def skip_line(self, line: str) -> bool:
+        return line.startswith("//") or line.isspace() or line == ""
+
     def advance(self) -> None:
         # Skips over whitespaces and comments
         self.current_idx += 1
 
-        def skip_line(line: str) -> bool:
-            return line.startswith("//") or line.isspace()
-
-        while self.has_more_lines() and skip_line(self.current_line):
+        while self.has_more_lines() and self.skip_line(self.current_line):
             self.current_idx += 1
 
     def instruction_type(self) -> str:
@@ -118,6 +118,7 @@ _JUMP_CODES: Dict[str, str] = {
 class Code:
     def dest(self, dest_str: str) -> str:
         """Return the 3-bit destination code. Specifies where to store comp."""
+        print(dest_str)
         flags = [0, 0, 0]
         if "A" in dest_str:
             flags[2] = 1
@@ -138,6 +139,11 @@ class Code:
 #### The assembler 
 _FILEPATH = flags.DEFINE_string("filepath", None, "The path to the file to assemble")
 
+def to_bin_string(num: int) -> str:
+    binarized_int: str = str(bin(num))[2:] # skip the '0b' prefix 
+    # Make this a 15-bit number 
+    return "0" * (15 - len(binarized_int)) + binarized_int
+
 def __main__(args) -> None:
     # Parse the flags
     flags.FLAGS(args)
@@ -150,14 +156,17 @@ def __main__(args) -> None:
         print("Loaded an empty file.")
         return None  # Empty file
 
+    if parser.skip_line(parser.current_line):
+        parser.advance() # Skip the first line if it's a comment
+
     while parser.has_more_lines():
         if parser.instruction_type() in ("A", "L"):
             symbol: str = parser.symbol()
             if parser.instruction_type() == "A":
-                output += "0" + symbol + "\n"
+                output += "0" + to_bin_string(int(symbol)) + "\n"
             else:
                 pass
-        else:
+        else: # TODO these are messing up
             # It's a C-instruction; get the block information
             dest, comp, jump = parser.dest(), parser.comp(), parser.jump()
             b_dest, b_comp, b_jump = (
