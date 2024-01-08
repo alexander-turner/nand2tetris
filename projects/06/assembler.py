@@ -1,5 +1,6 @@
 import os
 import sys
+from absl import flags
 from typing import Optional, Dict
 
 
@@ -134,17 +135,21 @@ class Code:
     def jump(self, jump_str: str) -> str:
         return _JUMP_CODES[jump_str]
 
+#### The assembler 
+_FILEPATH = flags.DEFINE_string("filepath", None, "The path to the file to assemble")
 
 def __main__(args) -> None:
-    # Implement the assembler
-    filepath: str = args[0]
-    parser = Parser(filepath=filepath)
+    # Parse the flags
+    flags.FLAGS(args)
+
+    parser = Parser(filepath=_FILEPATH.value)
     encoder = Code()
     output: str = ""
 
     if not parser.has_more_lines():
         print("Loaded an empty file.")
         return None  # Empty file
+
     while parser.has_more_lines():
         if parser.instruction_type() in ("A", "L"):
             symbol: str = parser.symbol()
@@ -165,7 +170,7 @@ def __main__(args) -> None:
     parser.finish()
 
     print(output)
-    basename: str = filepath.partition(".")[0]
+    basename: str = _FILEPATH.value.partition(".")[0]
     with open(basename + ".hack", mode="w") as f:
         f.write(output)
 
