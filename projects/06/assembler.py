@@ -52,16 +52,15 @@ class Parser:
 
     def dest(self) -> str:
         assert self.instruction_type() == "C"
-        first_part: str = self.current_line.partition("=")[0]
-        return first_part if first_part != str else ""
+        return self.current_line.partition("=")[0] if "=" in self.current_line else ""
 
     def comp(self) -> str:
         assert self.instruction_type() == "C"
-        second_part = self.current_line.partition("=")[
-            2
-        ]  # 0 is before, 1 is sep, 2 is after
-        # If there is no ;, then will return second_part, which is ok
-        return second_part.partition(";")[0]
+        comp_str = self.current_line
+        if '=' in self.current_line:
+            comp_str = comp_str.partition("=")[2]
+        # Return the part between = and ; 
+        return comp_str.partition(";")[0]
 
     def jump(self) -> str:
         assert self.instruction_type() == "C"
