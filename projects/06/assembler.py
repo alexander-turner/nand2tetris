@@ -64,6 +64,7 @@ class Parser:
 
     def jump(self) -> str:
         assert self.instruction_type() == "C"
+        if "=" in self.current_line: return ""
         return self.current_line.partition(";")[2]
 
     def finish(self) -> None:
@@ -115,9 +116,9 @@ _JUMP_CODES: Dict[str, str] = {
 
 
 class Code:
-    def dest(self, dest_str: str) -> str:
+    @staticmethod 
+    def dest(dest_str: str) -> str:
         """Return the 3-bit destination code. Specifies where to store comp."""
-        print(dest_str)
         flags = [0, 0, 0]
         if "A" in dest_str:
             flags[2] = 1
@@ -128,11 +129,13 @@ class Code:
 
         return str(flags[2]) + str(flags[1]) + str(flags[0])
 
-    def comp(self, comp_str: str) -> str:
+    @staticmethod
+    def comp(comp_str: str) -> str:
         a_bit: int = 1 if "M" in comp_str else 0
         return str(a_bit) + _COMP_CODES[comp_str]
 
-    def jump(self, jump_str: str) -> str:
+    @staticmethod
+    def jump(jump_str: str) -> str:
         return _JUMP_CODES[jump_str]
 
 #### The assembler 
@@ -148,7 +151,6 @@ def __main__(args) -> None:
     flags.FLAGS(args)
 
     parser = Parser(filepath=_FILEPATH.value)
-    encoder = Code()
     output: str = ""
 
     if not parser.has_more_lines():
@@ -169,15 +171,14 @@ def __main__(args) -> None:
             # It's a C-instruction; get the block information
             dest, comp, jump = parser.dest(), parser.comp(), parser.jump()
             b_dest, b_comp, b_jump = (
-                encoder.dest(dest),
-                encoder.comp(comp),
-                encoder.jump(jump),
+                Code.dest(dest),
+                Code.comp(comp),
+                Code.jump(jump),
             )
-            output += "111" + b_dest + b_comp + b_jump + "\n"
+            output += "111" + b_comp + b_dest + b_jump + "\n"
         parser.advance()  # Skip whitespace
     parser.finish()
 
-    print(output)
     basename: str = _FILEPATH.value.partition(".")[0]
     with open(basename + ".hack", mode="w") as f:
         f.write(output)
