@@ -1,4 +1,5 @@
 import os
+import re 
 import sys
 from absl import flags
 from typing import Optional, Dict
@@ -12,6 +13,59 @@ class Parser:
         self.file = open(filepath, "r")
         self.lines: list[str] = self.file.readlines()
         self.current_idx: int = 0
+
+        self.symbol_table: Dict[str, int] = {
+            'SP': 0, 'LCL': 1, 'ARG': 2, 'THIS': 3, 'THAT': 4, 
+            'SCREEN': 16384, 'KBD': 24576
+        } 
+        self.symbol_table.update({f'R{n}': n for n in range(16)})
+
+        self.fill_symbol_table() 
+        self.second_pass()
+
+    def fill_symbol_table(self) -> None:
+        """Fill in (XXX) L-instructions in the symbol table."""
+        
+        instruction_idx: int = 0 # Current ROM index 
+        if self.skip_line(self.current_line):
+            self.advance() # Skip the first line if it's a comment
+        while self.has_more_lines():
+            # Note occurrences of variables 
+            if self.instruction_type() == 'L':
+                self.symbol_table[self.symbol()] = instruction_idx 
+            else:
+                instruction_idx += 1 
+            self.advance()
+        # Reset so we can parse normally 
+        self.current_idx = 0 
+
+
+    def second_pass(self) -> None:
+        free_register: int = 16 # R0-R15 are taken 
+
+        if self.skip_line(self.current_line):
+            self.advance() # Skip the first line if it's a comment
+
+        while self.has_more_lines():
+            if self.instruction_type() == 'A' and not self.symbol().isdigit():
+                symbol = self.symbol()
+                if symbol not in self.symbol_table:
+                    self.symbol_table[symbol] = free_register
+                    free_register += 1
+                new_addr = self.symbol_table[symbol]
+                self.lines[self.current_idx] = "@" + str(new_addr)
+                
+            self.advance()
+        self.current_idx = 0 
+
+    @staticmethod 
+    def replace_symbols(input: str) -> str: 
+        # Sort keys by length, in descending order, to replace longer keys first
+        for key in sorted(dict_mapping.keys(), key=len, reverse=True):
+            # Use a regular expression to replace only whole words
+            regex_pattern = r'\b' + re.escape(key) + r'\b'
+            input_str = re.sub(regex_pattern, str(dict_mapping[key]), input_str)
+        return input_str
 
     @property
     def current_line(self) -> str:
@@ -64,7 +118,6 @@ class Parser:
 
     def jump(self) -> str:
         assert self.instruction_type() == "C"
-        if "=" in self.current_line: return ""
         return self.current_line.partition(";")[2]
 
     def finish(self) -> None:
@@ -161,14 +214,10 @@ def __main__(args) -> None:
         parser.advance() # Skip the first line if it's a comment
 
     while parser.has_more_lines():
-        if parser.instruction_type() in ("A", "L"):
+        if parser.instruction_type() == 'A':
             symbol: str = parser.symbol()
-            if parser.instruction_type() == "A":
-                output += "0" + to_bin_string(int(symbol)) + "\n"
-            else:
-                pass
-        else: # TODO these are messing up
-            # It's a C-instruction; get the block information
+            output += "0" + to_bin_string(int(symbol)) + "\n"
+        elif parser.instruction_type() == 'C':
             dest, comp, jump = parser.dest(), parser.comp(), parser.jump()
             b_dest, b_comp, b_jump = (
                 Code.dest(dest),
