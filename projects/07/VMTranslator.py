@@ -92,44 +92,68 @@ class CodeWriter:
         self.file = open(output, 'w')
 
 
+    @staticmethod
+    def _compute_target_address(segment: str, index: int) -> str:
+        """ Returns the assembly code that computes the target address
+        in the segment given by segment and index. Sets it as the
+        current address."""
+        assert segment in _SEGMENTS.keys()
+        # Compute target address to move value to
+        output = (
+            f"@{index}\n" 
+            "D=A\n"
+            # Add to base address
+            f"@{_SEGMENTS[segment]}\n"
+            "A=M+D\n"
+        )
+        return output
+
     def writePushPop(self, command: CommandType, segment: str, index: int) -> None: 
         """ Writes to the output file the assembly code that implements
         the given push/pop command."""
         assert command in (CommandType.C_POP, CommandType.C_PUSH)
-        # For pop, decrement SP, read the value, and store in segment-index
-        output: str = ""
+        output: str = self._compute_target_address(segment, index)
         if command == CommandType.C_POP: 
-            output = (
+            # For pop, decrement SP, read the value, and store in segment-index
+            output += (
+                "D=A\n"
+                # Store target address in register 13
+                "@R13\n"
+                "M=D\n"
                 # Decrement SP
                 "@SP\n"
                 "M=M-1\n"
+                "A=M\n" # Get RAM[SP] 
                 "D=M\n"
-                # Store RAM[SP] in temporary register 13 
-                "@R13\n" 
-                "M=D\n"
-                # Compute target address to move value to
-                f"@{index}\n" 
-                "D=A\n"
-                # Add to base address
-                f"@{_SEGMENTS[segment]}\n"
-                "A=M+D\n"
-                "D=A\n"
-                "@R14\n"
-                "M=D\n"
-                # Retrieve value from RAM[SP] 
+
+                # Retrieve target address
                 "@R13\n"
-                "D=M\n"
-                "@R14\n"
                 "A=M\n"
-                # Store the value
-                "M=D\n" 
+                # Store value
+                "M=D\n"
             )
         else: 
-            pass 
-        return output 
+            """ For push, read the value from segment-index and store in
+            RAM[SP], then increment SP."""
+            if segment == "constant":
+                output = (
+                    f"@{index}\n"
+                    "D=A" # Set to constant value 
+                )
+            else: 
+                output += "D=M\n" # Read the value from segment-index
+            output += (
+                "@SP\n" # Get RAM[SP]
+                "A=M\n"
+                "M=D\n" # Store value
+            )
+        self.file.write(output)
         
     def writeArithmetic(self, command: str) -> None: 
-        raise NotImplementedError
+        """ Writes to the output file the assembly code that implements
+        the given arithmetic-logical command."""
+        assert command in ("add", "sub", "neg", "eq", "gt", "lt", "and", "or", "not")
+        pass 
 
     def close(self) -> None: 
         self.file.close()
