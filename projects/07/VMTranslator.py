@@ -1,9 +1,11 @@
-from absl import flags 
-from typing import Dict 
-import enum 
+from absl import flags
+from typing import Dict
+import enum
+import sys
+
 
 @enum.unique
-class CommandType(enum.Enum): 
+class CommandType(enum.Enum):
     C_ARITHMETIC = enum.auto()
     C_PUSH = enum.auto()
     C_POP = enum.auto()
@@ -14,16 +16,17 @@ class CommandType(enum.Enum):
     C_RETURN = enum.auto()
     C_CALL = enum.auto()
 
-class Parser: 
-    def __init__(self, source: str) -> None: 
-        self.source = source 
-        self.file = open(source, 'r')
+
+class Parser:
+    def __init__(self, source: str) -> None:
+        self.source = source
+        self.file = open(source, "r")
         self.lines = self.file.readlines()
         self.current_idx = 0
-        
-    @property 
+
+    @property
     def current_line(self) -> str:
-        return self.lines[self.current_idx]
+        return self.lines[self.current_idx].strip()
 
     def has_more_lines(self) -> bool:
         return 0 <= self.current_idx < len(self.lines)
@@ -41,66 +44,74 @@ class Parser:
 
     def command_type(self) -> CommandType:
         """Returns a constant representing the type of the current command.
-If the current command is an arithmetic-logical command, returns
-C_ARITHMETIC.""" 
-        if "push" in self.current_line: 
+        If the current command is an arithmetic-logical command, returns
+        C_ARITHMETIC."""
+        if "push" in self.current_line:
             return CommandType.C_PUSH
         elif "pop" in self.current_line:
             return CommandType.C_POP
         elif "label" in self.current_line:
             return CommandType.C_LABEL
-        elif any(x in self.current_line for x in ["eq", "gt", "lt", "and", "or", "not"]):
+        elif any(
+            x in self.current_line
+            for x in ["eq", "gt", "lt", "and", "or", "not"]
+        ):
             return CommandType.C_IF
         elif "goto" in self.current_line:
             return CommandType.C_GOTO
         elif any(x in self.current_line for x in ["add", "sub", "neg"]):
-            return CommandType.C_FUNCTION
+            return CommandType.C_ARITHMETIC
         elif "return" in self.current_line:
             return CommandType.C_RETURN
         elif "call" in self.current_line:
             return CommandType.C_CALL
-        else: 
+        else:  # TODO implement function
             raise ValueError("Invalid command type")
 
     def arg1(self) -> str:
         # Return the first argument of the current command.
         command = self.command_type()
-        assert command != CommandType.C_RETURN 
+        assert command != CommandType.C_RETURN
         if command == CommandType.C_ARITHMETIC:
             return self.current_line.split()[0]
-        else: # Get the second word
+        else:  # Get the second word
             return self.current_line.split()[1]
 
     def arg2(self) -> int:
         """Return the second argument of the current command."""
         command = self.command_type()
-        assert command in (CommandType.C_PUSH, CommandType.C_POP, CommandType.C_RETURN)
+        assert command in (
+            CommandType.C_PUSH,
+            CommandType.C_POP,
+            CommandType.C_RETURN,
+        )
         return int(self.current_line.split()[2])
 
+
 _SEGMENTS: Dict[str, str] = {
-    'local': 'LCL',
-    'argument': 'ARG', 
-    'temp': 'TEMP',
-    'this': 'THIS',
-    'that': 'THAT'
+    "local": "LCL",
+    "argument": "ARG",
+    "temp": "TEMP",
+    "this": "THIS",
+    "that": "THAT",
 }
-class CodeWriter: 
-    """ Translates VM commands into Hack assembly code. """
 
-    def __init__(self, output: str) -> None: 
-        self.output = output 
-        self.file = open(output, 'w')
 
+class CodeWriter:
+    """Translates VM commands into Hack assembly code."""
+
+    def __init__(self, output_file: str) -> None:
+        self.file = open(output_file, "w")
 
     @staticmethod
     def _compute_target_address(segment: str, index: int) -> str:
-        """ Returns the assembly code that computes the target address
+        """Returns the assembly code that computes the target address
         in the segment given by segment and index. Sets it as the
         current address."""
-        assert segment in _SEGMENTS.keys()
+        assert segment in _SEGMENTS.keys(), f"{segment} not valid"
         # Compute target address to move value to
         output = (
-            f"@{index}\n" 
+            f"@{index}\n"
             "D=A\n"
             # Add to base address
             f"@{_SEGMENTS[segment]}\n"
@@ -108,12 +119,15 @@ class CodeWriter:
         )
         return output
 
-    def writePushPop(self, command: CommandType, segment: str, index: int) -> None: 
-        """ Writes to the output file the assembly code that implements
+    def writePushPop(
+        self, command: CommandType, segment: str, index: int
+    ) -> None:
+        """Writes to the output file the assembly code that implements
         the given push/pop command."""
         assert command in (CommandType.C_POP, CommandType.C_PUSH)
-        output: str = self._compute_target_address(segment, index)
-        if command == CommandType.C_POP: 
+        if segment != "constant":
+            output: str = self._compute_target_address(segment, index)
+        if command == CommandType.C_POP:
             # For pop, decrement SP, read the value, and store in segment-index
             output += (
                 "D=A\n"
@@ -123,42 +137,197 @@ class CodeWriter:
                 # Decrement SP
                 "@SP\n"
                 "M=M-1\n"
-                "A=M\n" # Get RAM[SP] 
+                "A=M\n"  # Get RAM[SP]
                 "D=M\n"
-
                 # Retrieve target address
                 "@R13\n"
                 "A=M\n"
                 # Store value
                 "M=D\n"
             )
-        else: 
-            """ For push, read the value from segment-index and store in
+        else:
+            """For push, read the value from segment-index and store in
             RAM[SP], then increment SP."""
             if segment == "constant":
                 output = (
                     f"@{index}\n"
-                    "D=A" # Set to constant value 
+                    "D=A"  # Set to constant value
                 )
-            else: 
-                output += "D=M\n" # Read the value from segment-index
+            else:
+                output += "D=M\n"  # Read the value from segment-index
             output += (
-                "@SP\n" # Get RAM[SP]
+                "@SP\n"  # Get RAM[SP]
                 "A=M\n"
-                "M=D\n" # Store value
+                "M=D\n"  # Store value
             )
         self.file.write(output)
-        
-    def writeArithmetic(self, command: str) -> None: 
-        """ Writes to the output file the assembly code that implements
-        the given arithmetic-logical command."""
-        assert command in ("add", "sub", "neg", "eq", "gt", "lt", "and", "or", "not")
-        pass 
 
-    def close(self) -> None: 
+    def writeArithmetic(self, command: str) -> None:
+        """Writes to the output file the assembly code that implements
+        the given arithmetic-logical command."""
+        if command in ("add", "sub"):
+            output = (
+                "@SP\n"
+                "M=M-1\n"  # Decrement SP
+                "A=M\n"  # Get RAM[SP]
+                "D=M\n"  # Store value
+                "A=A-1\n"  # Get RAM[SP-1]
+                "M=D+M\n"
+                if command == "add"
+                else "M=D-M\n"
+            )
+        elif command == "neg":
+            output = (
+                "@SP\n"
+                "M=M-1\n"  # Decrement SP
+                "A=M\n"  # Get RAM[SP]
+                "D=M\n"
+                # Do the negation
+                "@0\n"
+                "D=A-M\n"
+                # Store in RAM[SP]
+                "@SP\n"
+                "M=D\n"
+            )
+        elif command in ("eq", "lt", "gt"):
+            output = (
+                "@SP\n"
+                "M=M-1\n"  # Decrement SP
+                "A=M\n"  # Get RAM[SP]
+                "D=M\n"  # Store value
+                "A=A-1\n"  # Get RAM[SP-1]
+                "D=D-M\n"  # Get difference RAM[SP] - RAM[SP-1]
+                "@TRUE\n"
+            )
+            if command == "eq":
+                output += "M;JEQ\n"  # jump to TRUE if M==0
+            elif command == "lt":
+                output += "M;JLT\n"
+            else:
+                output += "M;JGT\n"
+            output += (
+                "M=0\n"  # If we didn't jump, the conditional is false
+                "@END\n"  # Jump past the TRUE clause
+                "0;JMP\n"
+                "(TRUE)\n"
+                "M=-1\n"
+            )
+        elif command == "and":
+            # really we should check that the stack values are either -1
+            # or 0, but we are supposed to assume correct code so I
+            # won't
+            output = (
+                "@SP\n"
+                "M=M-1\n"
+                "A=M\n"  # Get RAM[--SP]
+                "D=M\n"
+                "@FALSE\n"  # If geq 0, we assume value is 0 (false)
+                "D;JGE\n"
+                "@SP\n"  # Check the second RAM value
+                "M=M-1\n"
+                "A=M\n"
+                "D=M\n"
+                "@FALSE\n"
+                "D;JGE\n"
+                "@SP\n"  # Neither jump triggered, so it's true
+                "A=M\n"
+                "M=-1\n"  # Write True
+                "@END\n"
+                "0;JMP\n"
+                "(FALSE)\n"
+                "@SP\n"  # A jump triggered, so it's false
+                "A=M\n"
+                "M=0\n"  # Write False
+            )
+        elif command == "or":
+            output = (
+                "@SP\n"
+                "M=M-1\n"
+                "A=M\n"  # Get RAM[--SP]
+                "D=M\n"
+                "@TRUE\n"  # If lt 0, we assume value is -1 (true)
+                "D;JLT\n"
+                "@SP\n"  # Check the second RAM value
+                "M=M-1\n"
+                "A=M\n"
+                "D=M\n"
+                "@TRUE\n"
+                "D;JLT\n"
+                "@SP\n"  # Neither jump triggered, so it's false
+                "A=M\n"
+                "M=0\n"  # Write false
+                "@END\n"
+                "0;JMP\n"
+                "(TRUE)\n"
+                "@SP\n"  # A jump triggered, so it's true
+                "A=M\n"
+                "M=-1\n"  # Write True
+            )
+        elif command == "neg":  # command is neg
+            output = (
+                "@SP\n"
+                "M=M-1\n"
+                "A=M\n"  # Get RAM[--SP]
+                "D=M\n"
+                "@FALSE\n"  # If lt 0, we assume value is -1 (true)
+                "D;JLT\n"
+                "@SP\n"  # Neither jump triggered, so it's false
+                "A=M\n"
+                "M=-1\n"  # Write true
+                "@END\n"
+                "0;JMP\n"
+                "(FALSE)\n"
+                "@SP\n"  # A jump triggered, so it's false
+                "A=M\n"
+                "M=0\n"  # Write false
+            )
+        else:
+            raise ValueError("Invalid command type")
+
+        output += "(END)\n@END\n0;JMP\n"  # Endless loop
+
+        self.file.write(output)
+
+    def close(self) -> None:
         self.file.close()
 
-_SOURCE = flags.DEFINE_string('source', '', 'File name to translate', short_name='s', )
 
-def __main__(args) -> None: 
+_SOURCE = flags.DEFINE_string(
+    "source",
+    "",
+    "File name to translate",
+    short_name="s",
+)
 
+
+def __main__(args) -> None:
+    # Parse the flags
+    flags.FLAGS(args)
+
+    parser = Parser(source=_SOURCE.value)
+    output: str = ""
+
+    if not parser.has_more_lines():
+        print("Loaded an empty file.")
+        return None  # Empty file
+
+    if parser.skip_line(parser.current_line):
+        parser.advance()  # Skip the first line if it's a comment
+
+    basename: str = _SOURCE.value.partition(".")[0]
+    writer = CodeWriter(basename + ".asm")
+    while parser.has_more_lines():
+        command: CommandType = parser.command_type()
+        arg1 = parser.arg1()  # NOTE not handling return command type
+        if command in (CommandType.C_POP, CommandType.C_PUSH):
+            arg2 = parser.arg2()
+            writer.writePushPop(command=command, segment=arg1, index=arg2)
+        else:
+            writer.writeArithmetic(command=arg1)
+
+        parser.advance()  # Skip whitespace
+    writer.close()
+
+
+if __name__ == "__main__":
+    __main__(sys.argv)

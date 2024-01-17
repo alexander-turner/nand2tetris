@@ -1,8 +1,8 @@
 import os
-import re 
+import re
 import sys
 from absl import flags
-from typing import Optional, Dict
+from typing import Dict
 
 
 class Parser:
@@ -15,56 +15,62 @@ class Parser:
         self.current_idx: int = 0
 
         self.symbol_table: Dict[str, int] = {
-            'SP': 0, 'LCL': 1, 'ARG': 2, 'THIS': 3, 'THAT': 4, 
-            'SCREEN': 16384, 'KBD': 24576
-        } 
-        self.symbol_table.update({f'R{n}': n for n in range(16)})
+            "SP": 0,
+            "LCL": 1,
+            "ARG": 2,
+            "THIS": 3,
+            "THAT": 4,
+            "SCREEN": 16384,
+            "KBD": 24576,
+        }
+        self.symbol_table.update({f"R{n}": n for n in range(16)})
 
-        self.fill_symbol_table() 
+        self.fill_symbol_table()
         self.second_pass()
 
     def fill_symbol_table(self) -> None:
         """Fill in (XXX) L-instructions in the symbol table."""
-        
-        instruction_idx: int = 0 # Current ROM index 
-        if self.skip_line(self.current_line):
-            self.advance() # Skip the first line if it's a comment
-        while self.has_more_lines():
-            # Note occurrences of variables 
-            if self.instruction_type() == 'L':
-                self.symbol_table[self.symbol()] = instruction_idx 
-            else:
-                instruction_idx += 1 
-            self.advance()
-        # Reset so we can parse normally 
-        self.current_idx = 0 
 
+        instruction_idx: int = 0  # Current ROM index
+        if self.skip_line(self.current_line):
+            self.advance()  # Skip the first line if it's a comment
+        while self.has_more_lines():
+            # Note occurrences of variables
+            if self.instruction_type() == "L":
+                self.symbol_table[self.symbol()] = instruction_idx
+            else:
+                instruction_idx += 1
+            self.advance()
+        # Reset so we can parse normally
+        self.current_idx = 0
 
     def second_pass(self) -> None:
-        free_register: int = 16 # R0-R15 are taken 
+        free_register: int = 16  # R0-R15 are taken
 
         if self.skip_line(self.current_line):
-            self.advance() # Skip the first line if it's a comment
+            self.advance()  # Skip the first line if it's a comment
 
         while self.has_more_lines():
-            if self.instruction_type() == 'A' and not self.symbol().isdigit():
+            if self.instruction_type() == "A" and not self.symbol().isdigit():
                 symbol = self.symbol()
                 if symbol not in self.symbol_table:
                     self.symbol_table[symbol] = free_register
                     free_register += 1
                 new_addr = self.symbol_table[symbol]
                 self.lines[self.current_idx] = "@" + str(new_addr)
-                
-            self.advance()
-        self.current_idx = 0 
 
-    @staticmethod 
-    def replace_symbols(input: str) -> str: 
+            self.advance()
+        self.current_idx = 0
+
+    @staticmethod
+    def replace_symbols(input: str) -> str:
         # Sort keys by length, in descending order, to replace longer keys first
         for key in sorted(dict_mapping.keys(), key=len, reverse=True):
             # Use a regular expression to replace only whole words
-            regex_pattern = r'\b' + re.escape(key) + r'\b'
-            input_str = re.sub(regex_pattern, str(dict_mapping[key]), input_str)
+            regex_pattern = r"\b" + re.escape(key) + r"\b"
+            input_str = re.sub(
+                regex_pattern, str(dict_mapping[key]), input_str
+            )
         return input_str
 
     @property
@@ -106,14 +112,18 @@ class Parser:
 
     def dest(self) -> str:
         assert self.instruction_type() == "C"
-        return self.current_line.partition("=")[0] if "=" in self.current_line else ""
+        return (
+            self.current_line.partition("=")[0]
+            if "=" in self.current_line
+            else ""
+        )
 
     def comp(self) -> str:
         assert self.instruction_type() == "C"
         comp_str = self.current_line
-        if '=' in self.current_line:
+        if "=" in self.current_line:
             comp_str = comp_str.partition("=")[2]
-        # Return the part between = and ; 
+        # Return the part between = and ;
         return comp_str.partition(";")[0]
 
     def jump(self) -> str:
@@ -169,7 +179,7 @@ _JUMP_CODES: Dict[str, str] = {
 
 
 class Code:
-    @staticmethod 
+    @staticmethod
     def dest(dest_str: str) -> str:
         """Return the 3-bit destination code. Specifies where to store comp."""
         flags = [0, 0, 0]
@@ -191,13 +201,18 @@ class Code:
     def jump(jump_str: str) -> str:
         return _JUMP_CODES[jump_str]
 
-#### The assembler 
-_FILEPATH = flags.DEFINE_string("filepath", None, "The path to the file to assemble")
+
+#### The assembler
+_FILEPATH = flags.DEFINE_string(
+    "filepath", None, "The path to the file to assemble"
+)
+
 
 def to_bin_string(num: int) -> str:
-    binarized_int: str = str(bin(num))[2:] # skip the '0b' prefix 
-    # Make this a 15-bit number 
+    binarized_int: str = str(bin(num))[2:]  # skip the '0b' prefix
+    # Make this a 15-bit number
     return "0" * (15 - len(binarized_int)) + binarized_int
+
 
 def __main__(args) -> None:
     # Parse the flags
@@ -211,13 +226,13 @@ def __main__(args) -> None:
         return None  # Empty file
 
     if parser.skip_line(parser.current_line):
-        parser.advance() # Skip the first line if it's a comment
+        parser.advance()  # Skip the first line if it's a comment
 
     while parser.has_more_lines():
-        if parser.instruction_type() == 'A':
+        if parser.instruction_type() == "A":
             symbol: str = parser.symbol()
             output += "0" + to_bin_string(int(symbol)) + "\n"
-        elif parser.instruction_type() == 'C':
+        elif parser.instruction_type() == "C":
             dest, comp, jump = parser.dest(), parser.comp(), parser.jump()
             b_dest, b_comp, b_jump = (
                 Code.dest(dest),
