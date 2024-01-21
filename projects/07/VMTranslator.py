@@ -20,8 +20,8 @@ class CommandType(enum.Enum):
 class Parser:
     def __init__(self, source: str) -> None:
         self.source = source
-        self.file = open(source, "r")
-        self.lines = self.file.readlines()
+        with open(self.source, "r") as f:
+            self.lines = f.readlines()
         self.current_idx = 0
 
     @property
@@ -56,7 +56,7 @@ class Parser:
             x in self.current_line
             for x in ["eq", "gt", "lt", "and", "or", "not"]
         ):
-            return CommandType.C_IF
+            return CommandType.C_ARITHMETIC
         elif "goto" in self.current_line:
             return CommandType.C_GOTO
         elif any(x in self.current_line for x in ["add", "sub", "neg"]):
@@ -101,7 +101,7 @@ class CodeWriter:
     """Translates VM commands into Hack assembly code."""
 
     def __init__(self, output_file: str) -> None:
-        self.file = open(output_file, "w")
+        self.filename = output_file
 
     @staticmethod
     def _compute_target_address(segment: str, index: int) -> str:
@@ -118,6 +118,11 @@ class CodeWriter:
             "A=M+D\n"
         )
         return output
+
+    def write_to_file(self, content: str) -> None:
+        """Writes the given content to the output file."""
+        with open(self.filename, "a") as f:
+            f.write(content)
 
     def writePushPop(
         self, command: CommandType, segment: str, index: int
@@ -151,7 +156,7 @@ class CodeWriter:
             if segment == "constant":
                 output = (
                     f"@{index}\n"
-                    "D=A"  # Set to constant value
+                    "D=A\n"  # Set to constant value
                 )
             else:
                 output += "D=M\n"  # Read the value from segment-index
@@ -160,7 +165,7 @@ class CodeWriter:
                 "A=M\n"
                 "M=D\n"  # Store value
             )
-        self.file.write(output)
+        self.write_to_file(output)
 
     def writeArithmetic(self, command: str) -> None:
         """Writes to the output file the assembly code that implements
@@ -263,7 +268,7 @@ class CodeWriter:
                 "A=M\n"
                 "M=-1\n"  # Write True
             )
-        elif command == "neg":  # command is neg
+        elif command == "not":  # command is neg
             output = (
                 "@SP\n"
                 "M=M-1\n"
@@ -286,10 +291,7 @@ class CodeWriter:
 
         output += "(END)\n@END\n0;JMP\n"  # Endless loop
 
-        self.file.write(output)
-
-    def close(self) -> None:
-        self.file.close()
+        self.write_to_file(output)
 
 
 _SOURCE = flags.DEFINE_string(
@@ -326,7 +328,6 @@ def __main__(args) -> None:
             writer.writeArithmetic(command=arg1)
 
         parser.advance()  # Skip whitespace
-    writer.close()
 
 
 if __name__ == "__main__":
