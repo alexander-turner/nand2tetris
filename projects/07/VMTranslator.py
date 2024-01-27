@@ -126,13 +126,14 @@ class CodeWriter:
         current address."""
         assert segment in _SEGMENTS.keys(), f"{segment} not valid"
         # Compute target address to move value to
-        output = (
-            f"@{index}\n"
-            "D=A\n"
+        output = f"@{index}\nD=A\n"
+        if segment == "temp":
+            output += "@5\n"  # Starts at address 5
+            output += "A=A+D\n"
+        else:  # We're jumping to the address stored in the segment
             # Add to base address
-            f"@{_SEGMENTS[segment]}\n"
-            "A=M+D\n"
-        )
+            output += f"@{_SEGMENTS[segment]}\n"
+            output += "A=M+D\n"
         return output
 
     def writePushPop(
@@ -142,13 +143,11 @@ class CodeWriter:
         the given push/pop command."""
         assert command in (CommandType.C_POP, CommandType.C_PUSH)
         if command == CommandType.C_POP:
+            if segment == "constant":
+                return  # Ignore pop constant
             # For pop, decrement SP, read the value, and store in
             # segment-index
-            output = (
-                ""
-                if segment == "constant"
-                else self._compute_target_address(segment, index)
-            )
+            output = self._compute_target_address(segment, index)
             output += (
                 "D=A\n"
                 # Store target address in register 13
@@ -179,10 +178,9 @@ class CodeWriter:
                 )  # Read the value from segment-index
             output += (
                 "@SP\n"  # Get RAM[SP]
-                "A=M\n"
-                "M=D\n"  # Store value
-                "@SP\n"
                 "M=M+1\n"
+                "A=M-1\n"  # Get RAM[SP-1]
+                "M=D\n"  # Store value
             )
         self._write_to_file(output)
 
@@ -285,7 +283,6 @@ def __main__(args) -> None:
 
     if parser.skip_line(parser.current_line):
         parser.advance()  # Skip the first line if it's a comment
-
     basename: str = _SOURCE.value.partition(".")[0]
     writer = CodeWriter(basename + ".asm")
     while parser.has_more_lines():
