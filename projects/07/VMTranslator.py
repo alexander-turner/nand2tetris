@@ -19,6 +19,11 @@ class CommandType(enum.Enum):
 
 class Parser:
     def __init__(self, source: str) -> None:
+        assert source.endswith(".vm"), "Invalid file type"
+        assert (
+            source[0].capitalize() == source[0]
+        ), f"First letter of {source} must be capitalized."
+
         self.source = source
         with open(self.source, "r") as f:
             self.lines = f.readlines()
@@ -69,7 +74,7 @@ class Parser:
             raise ValueError("Invalid command type")
 
     def arg1(self) -> str:
-        # Return the first argument of the current command.
+        """Returns the first argument of the current command."""
         command = self.command_type()
         assert command != CommandType.C_RETURN
         if command == CommandType.C_ARITHMETIC:
@@ -83,7 +88,8 @@ class Parser:
         assert command in (
             CommandType.C_PUSH,
             CommandType.C_POP,
-            CommandType.C_RETURN,
+            CommandType.C_FUNCTION,
+            CommandType.C_CALL,
         )
         return int(self.current_line.split()[2])
 
@@ -102,6 +108,16 @@ class CodeWriter:
 
     def __init__(self, output_file: str) -> None:
         self.filename = output_file
+        # Delete file if it exists
+        with open(self.filename, "w") as f:
+            f.write("")  # Clear the file
+
+        self.arithmetic_counter = 0
+
+    def _write_to_file(self, content: str) -> None:
+        """Writes the given content to the output file."""
+        with open(self.filename, "a") as f:
+            f.write(content)
 
     @staticmethod
     def _compute_target_address(segment: str, index: int) -> str:
@@ -119,21 +135,20 @@ class CodeWriter:
         )
         return output
 
-    def write_to_file(self, content: str) -> None:
-        """Writes the given content to the output file."""
-        with open(self.filename, "a") as f:
-            f.write(content)
-
     def writePushPop(
         self, command: CommandType, segment: str, index: int
     ) -> None:
         """Writes to the output file the assembly code that implements
         the given push/pop command."""
         assert command in (CommandType.C_POP, CommandType.C_PUSH)
-        if segment != "constant":
-            output: str = self._compute_target_address(segment, index)
         if command == CommandType.C_POP:
-            # For pop, decrement SP, read the value, and store in segment-index
+            # For pop, decrement SP, read the value, and store in
+            # segment-index
+            output = (
+                ""
+                if segment == "constant"
+                else self._compute_target_address(segment, index)
+            )
             output += (
                 "D=A\n"
                 # Store target address in register 13
@@ -159,13 +174,17 @@ class CodeWriter:
                     "D=A\n"  # Set to constant value
                 )
             else:
-                output += "D=M\n"  # Read the value from segment-index
+                output = (
+                    self._compute_target_address(segment, index) + "D=M\n"
+                )  # Read the value from segment-index
             output += (
                 "@SP\n"  # Get RAM[SP]
                 "A=M\n"
-                "M=D\n"  # Store value
+                "M=D\n"
+                "@SP\n"
+                "M=M+1\n"  # Store value
             )
-        self.write_to_file(output)
+        self._write_to_file(output)
 
     def writeArithmetic(self, command: str) -> None:
         """Writes to the output file the assembly code that implements
@@ -202,19 +221,19 @@ class CodeWriter:
                 "D=M\n"  # Store value
                 "A=A-1\n"  # Get RAM[SP-1]
                 "D=D-M\n"  # Get difference RAM[SP] - RAM[SP-1]
-                "@TRUE\n"
+                f"@TRUE{self.arithmetic_counter}\n"
             )
             if command == "eq":
-                output += "M;JEQ\n"  # jump to TRUE if M==0
+                output += "D;JEQ\n"  # jump to TRUE if D==0
             elif command == "lt":
-                output += "M;JLT\n"
+                output += "D;JLT\n"
             else:
-                output += "M;JGT\n"
+                output += "D;JGT\n"
             output += (
                 "M=0\n"  # If we didn't jump, the conditional is false
-                "@END\n"  # Jump past the TRUE clause
+                f"@END{self.arithmetic_counter}\n"  # Jump past the TRUE clause
                 "0;JMP\n"
-                "(TRUE)\n"
+                f"(TRUE{self.arithmetic_counter})\n"
                 "M=-1\n"
             )
         elif command == "and":
@@ -226,20 +245,20 @@ class CodeWriter:
                 "M=M-1\n"
                 "A=M\n"  # Get RAM[--SP]
                 "D=M\n"
-                "@FALSE\n"  # If geq 0, we assume value is 0 (false)
+                f"@FALSE{self.arithmetic_counter}\n"  # If geq 0, we assume value is 0 (false)
                 "D;JGE\n"
                 "@SP\n"  # Check the second RAM value
                 "M=M-1\n"
                 "A=M\n"
                 "D=M\n"
-                "@FALSE\n"
+                f"@FALSE{self.arithmetic_counter}\n"
                 "D;JGE\n"
                 "@SP\n"  # Neither jump triggered, so it's true
                 "A=M\n"
                 "M=-1\n"  # Write True
-                "@END\n"
+                f"@END{self.arithmetic_counter}\n"
                 "0;JMP\n"
-                "(FALSE)\n"
+                f"(FALSE{self.arithmetic_counter})\n"
                 "@SP\n"  # A jump triggered, so it's false
                 "A=M\n"
                 "M=0\n"  # Write False
@@ -250,20 +269,20 @@ class CodeWriter:
                 "M=M-1\n"
                 "A=M\n"  # Get RAM[--SP]
                 "D=M\n"
-                "@TRUE\n"  # If lt 0, we assume value is -1 (true)
+                f"@TRUE{self.arithmetic_counter}\n"  # If lt 0, we assume value is -1 (true)
                 "D;JLT\n"
                 "@SP\n"  # Check the second RAM value
                 "M=M-1\n"
                 "A=M\n"
                 "D=M\n"
-                "@TRUE\n"
+                f"@TRUE{self.arithmetic_counter}\n"
                 "D;JLT\n"
                 "@SP\n"  # Neither jump triggered, so it's false
                 "A=M\n"
                 "M=0\n"  # Write false
-                "@END\n"
+                f"@END{self.arithmetic_counter}\n"
                 "0;JMP\n"
-                "(TRUE)\n"
+                f"(TRUE{self.arithmetic_counter})\n"
                 "@SP\n"  # A jump triggered, so it's true
                 "A=M\n"
                 "M=-1\n"  # Write True
@@ -274,14 +293,14 @@ class CodeWriter:
                 "M=M-1\n"
                 "A=M\n"  # Get RAM[--SP]
                 "D=M\n"
-                "@FALSE\n"  # If lt 0, we assume value is -1 (true)
+                f"@FALSE{self.arithmetic_counter}\n"  # If lt 0, we assume value is -1 (true)
                 "D;JLT\n"
                 "@SP\n"  # Neither jump triggered, so it's false
                 "A=M\n"
                 "M=-1\n"  # Write true
-                "@END\n"
+                f"@END{self.arithmetic_counter}\n"
                 "0;JMP\n"
-                "(FALSE)\n"
+                f"(FALSE{self.arithmetic_counter})\n"
                 "@SP\n"  # A jump triggered, so it's false
                 "A=M\n"
                 "M=0\n"  # Write false
@@ -289,9 +308,10 @@ class CodeWriter:
         else:
             raise ValueError("Invalid command type")
 
-        output += "(END)\n@END\n0;JMP\n"  # Endless loop
-
-        self.write_to_file(output)
+        if command not in ("add", "sub", "neg"):
+            output += f"(END{self.arithmetic_counter})\n"
+        self.arithmetic_counter += 1
+        self._write_to_file(output)
 
 
 _SOURCE = flags.DEFINE_string(
@@ -307,7 +327,6 @@ def __main__(args) -> None:
     flags.FLAGS(args)
 
     parser = Parser(source=_SOURCE.value)
-    output: str = ""
 
     if not parser.has_more_lines():
         print("Loaded an empty file.")
@@ -328,6 +347,7 @@ def __main__(args) -> None:
             writer.writeArithmetic(command=arg1)
 
         parser.advance()  # Skip whitespace
+    writer._write_to_file(f"(END)\n@END\n0;JMP\n")  # Endless loop
 
 
 if __name__ == "__main__":
