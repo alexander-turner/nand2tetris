@@ -180,130 +180,81 @@ class CodeWriter:
             output += (
                 "@SP\n"  # Get RAM[SP]
                 "A=M\n"
-                "M=D\n"
+                "M=D\n"  # Store value
                 "@SP\n"
-                "M=M+1\n"  # Store value
+                "M=M+1\n"
             )
         self._write_to_file(output)
 
     def writeArithmetic(self, command: str) -> None:
         """Writes to the output file the assembly code that implements
         the given arithmetic-logical command."""
+        if command not in ("not", "neg"):  # Single arg, doesn't decrement SP
+            output = "@SP\nM=M-1\n"  # Decrement SP
+            output += "A=M\nD=M\n"  # Get RAM[SP] and store in D
+
         if command in ("add", "sub"):
-            output = (
-                "@SP\n"
-                "M=M-1\n"  # Decrement SP
-                "A=M\n"  # Get RAM[SP]
-                "D=M\n"  # Store value
-                "A=A-1\n"  # Get RAM[SP-1]
-                "M=D+M\n"
-                if command == "add"
-                else "M=D-M\n"
-            )
+            output += "A=A-1\n"  # Get RAM[SP-1]
+            output += (
+                "M=M+D\n" if command == "add" else "M=M-D\n"
+            )  # RAM[SP-1] - RAM[SP]
         elif command == "neg":
             output = (
                 "@SP\n"
-                "M=M-1\n"  # Decrement SP
-                "A=M\n"  # Get RAM[SP]
+                "A=M-1\n"  # Get RAM[SP-1]
                 "D=M\n"
                 # Do the negation
                 "@0\n"
-                "D=A-M\n"
+                "D=A-D\n"
                 # Store in RAM[SP]
                 "@SP\n"
-                "M=D\n"
+                "A=M-1\n"
+                "M=D\n"  # Write to RAM[SP-1]
             )
         elif command in ("eq", "lt", "gt"):
-            output = (
-                "@SP\n"
-                "M=M-1\n"  # Decrement SP
-                "A=M\n"  # Get RAM[SP]
-                "D=M\n"  # Store value
-                "A=A-1\n"  # Get RAM[SP-1]
-                "D=D-M\n"  # Get difference RAM[SP] - RAM[SP-1]
+            output += (
+                "A=A-1\n"  # Get SP-1 (y addr)
+                "D=D-M\n"  # Get difference RAM[SP] (y) - RAM[SP-1] (x)
                 f"@TRUE{self.arithmetic_counter}\n"
             )
             if command == "eq":
                 output += "D;JEQ\n"  # jump to TRUE if D==0
-            elif command == "lt":
-                output += "D;JLT\n"
-            else:
+            elif command == "lt":  # x < y so we check if y-x = D > 0
                 output += "D;JGT\n"
+            else:
+                output += "D;JLT\n"
             output += (
-                "M=0\n"  # If we didn't jump, the conditional is false
+                "@SP\n"  # If we jumped, the conditional is false
+                "A=M-1\n"  # Overwrite RAM[SP-1]
+                "M=0\n"
                 f"@END{self.arithmetic_counter}\n"  # Jump past the TRUE clause
                 "0;JMP\n"
                 f"(TRUE{self.arithmetic_counter})\n"
+                "@SP\n"
+                "A=M-1\n"  # Overwrite RAM[SP-1]
                 "M=-1\n"
             )
         elif command == "and":
-            # really we should check that the stack values are either -1
-            # or 0, but we are supposed to assume correct code so I
-            # won't
-            output = (
-                "@SP\n"
-                "M=M-1\n"
-                "A=M\n"  # Get RAM[--SP]
-                "D=M\n"
-                f"@FALSE{self.arithmetic_counter}\n"  # If geq 0, we assume value is 0 (false)
-                "D;JGE\n"
-                "@SP\n"  # Check the second RAM value
-                "M=M-1\n"
-                "A=M\n"
-                "D=M\n"
-                f"@FALSE{self.arithmetic_counter}\n"
-                "D;JGE\n"
-                "@SP\n"  # Neither jump triggered, so it's true
-                "A=M\n"
-                "M=-1\n"  # Write True
-                f"@END{self.arithmetic_counter}\n"
-                "0;JMP\n"
-                f"(FALSE{self.arithmetic_counter})\n"
-                "@SP\n"  # A jump triggered, so it's false
-                "A=M\n"
-                "M=0\n"  # Write False
+            output += (
+                "A=A-1\n"  # Get RAM[SP-1]
+                "M=M&D\n"  # RAM[SP-1] & RAM[SP]
             )
         elif command == "or":
-            output = (
-                "@SP\n"
-                "M=M-1\n"
-                "A=M\n"  # Get RAM[--SP]
-                "D=M\n"
-                f"@TRUE{self.arithmetic_counter}\n"  # If lt 0, we assume value is -1 (true)
-                "D;JLT\n"
-                "@SP\n"  # Check the second RAM value
-                "M=M-1\n"
-                "A=M\n"
-                "D=M\n"
-                f"@TRUE{self.arithmetic_counter}\n"
-                "D;JLT\n"
-                "@SP\n"  # Neither jump triggered, so it's false
-                "A=M\n"
-                "M=0\n"  # Write false
-                f"@END{self.arithmetic_counter}\n"
-                "0;JMP\n"
-                f"(TRUE{self.arithmetic_counter})\n"
-                "@SP\n"  # A jump triggered, so it's true
-                "A=M\n"
-                "M=-1\n"  # Write True
+            output += (
+                "A=A-1\n"  # Get RAM[SP-1]
+                "M=M|D\n"  # RAM[SP-1] | RAM[SP]
             )
-        elif command == "not":  # command is neg
+        elif command == "not":  # command is bitwise-not
             output = (
                 "@SP\n"
-                "M=M-1\n"
-                "A=M\n"  # Get RAM[--SP]
-                "D=M\n"
-                f"@FALSE{self.arithmetic_counter}\n"  # If lt 0, we assume value is -1 (true)
-                "D;JLT\n"
-                "@SP\n"  # Neither jump triggered, so it's false
-                "A=M\n"
-                "M=-1\n"  # Write true
-                f"@END{self.arithmetic_counter}\n"
-                "0;JMP\n"
-                f"(FALSE{self.arithmetic_counter})\n"
-                "@SP\n"  # A jump triggered, so it's false
-                "A=M\n"
-                "M=0\n"  # Write false
+                "A=M-1\n"  # Get RAM[SP-1]
+                "D=M\n"  # Store bitwise-not in RAM[SP-1]
+                "@0\n"
+                "D=A-D\n"
+                "D=D-1\n"
+                "@SP\n"
+                "A=M-1\n"
+                "M=D\n"
             )
         else:
             raise ValueError("Invalid command type")
