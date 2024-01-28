@@ -106,8 +106,8 @@ _SEGMENTS: Dict[str, str] = {
 class CodeWriter:
     """Translates VM commands into Hack assembly code."""
 
-    def __init__(self, output_file: str) -> None:
-        self.filename = output_file
+    def __init__(self, output_filename: str) -> None:
+        self.filename = output_filename
         # Delete file if it exists
         with open(self.filename, "w") as f:
             f.write("")  # Clear the file
@@ -119,12 +119,27 @@ class CodeWriter:
         with open(self.filename, "a") as f:
             f.write(content)
 
-    @staticmethod
-    def _compute_target_address(segment: str, index: int) -> str:
+    def _compute_target_address(self, segment: str, index: int) -> str:
         """Returns the assembly code that computes the target address
         in the segment given by segment and index. Sets it as the
         current address."""
-        assert segment in _SEGMENTS.keys(), f"{segment} not valid"
+        assert (
+            segment in _SEGMENTS.keys()
+            or segment == "pointer"
+            or segment == "static"
+        ), f"{segment} not valid"
+
+        if segment == "pointer":
+            if index == 0:
+                return "@THIS\n"
+            elif index == 1:
+                return "@THAT\n"
+            else:
+                raise ValueError("Invalid pointer index")
+
+        if segment == "static":
+            return f"@{self.filename.partition('.')[-2]}.{index}\n"
+
         # Compute target address to move value to
         output = f"@{index}\nD=A\n"
         if segment == "temp":
