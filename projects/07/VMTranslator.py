@@ -78,7 +78,7 @@ class Parser:
     def is_valid_label_name(label: str) -> bool:
         """The label is a string composed of any sequence of letters, digits, underscore (_), dot (.), and colon (:) that does not begin with a digit."""
         pattern = "^[a-zA-Z_.$:][a-zA-Z_.$:0-9]*$"
-        return bool(re.match(pattern, label))
+        return bool(re.match(pattern, label)) and not label == "END"
 
     def arg1(self) -> str:
         """Returns the first argument of the current command."""
@@ -117,17 +117,18 @@ class CodeWriter:
 
     def __init__(self, output_filename: str) -> None:
         self.filename = output_filename
+        self.reset()
+
+    def reset(self) -> None:
         # Delete file if it exists
         with open(self.filename, "w") as f:
             f.write("")  # Clear the file
-        self.written_lines: int = 0
         self.arithmetic_counter = 0
 
     def _write_to_file(self, content: str) -> None:
         """Writes the given content to the output file."""
         with open(self.filename, "a") as f:
             f.write(content)
-        self.written_lines += 1
 
     def _compute_target_address(self, segment: str, index: int) -> str:
         """Returns the assembly code that computes the target address
@@ -287,6 +288,13 @@ class CodeWriter:
         self.arithmetic_counter += 1
         self._write_to_file(output)
 
+    def write_label(self, location_name: str) -> None:
+        """Writes the assembly code that effects the label command."""
+        self._write_to_file(f"({location_name})\n")
+
+    def write_end_loop(self) -> None:
+        self._write_to_file(f"(END)\n@END\n0;JMP\n")
+
 _SOURCE = flags.DEFINE_string(
     "source",
     "",
@@ -304,51 +312,37 @@ def __main__(args) -> None:
         print("Loaded an empty file.")
         return None  # Empty file
 
-    # Find the labels and store their line numbers
-    locations: Dict[str, int] = defaultdict(int)
-    if parser.skip_line(parser.current_line):
-        parser.advance()
-    while parser.has_more_lines():
-        if parser.command_type() == CommandType.C_LABEL:
-            location_name: str = parser.arg2()
-            if not parser.is_valid_label_name(location_name):
-                raise ValueError(f"Invalid label name: {location_name}")
-            # Store the line number of the next instruction
-            locations[location_name] = parser.current_idx
-            del parser.lines[parser.current_idx]  # Remove the label
-        else: # Skip the line
-            parser.advance()
-    parser.reset() 
-
-    # Now we can start translating
-    if parser.skip_line(parser.current_line):
-        parser.advance()  # Skip the first line if it's a comment
     basename: str = _SOURCE.value.partition(".")[0]
     writer = CodeWriter(basename + ".asm")
+
+    if parser.skip_line(parser.current_line):
+        parser.advance()  # Skip the first line if it's a comment
     while parser.has_more_lines():
         command: CommandType = parser.command_type()
+
         arg1 = parser.arg1()  # NOTE not handling return command type
         if command in (CommandType.C_POP, CommandType.C_PUSH):
             arg2 = parser.arg2()
             writer.writePushPop(command=command, segment=arg1, index=arg2)
-        else if command == CommandType.C_LABEL:
-            raise ValueError("There was a label even after the first pass? Bug.")
-        else if command == CommandType.C_GOTO:
-            location_name: str = parser.arg2()
-            if location_name not in locations:
+        elif command == CommandType.C_LABEL:
+            location_name: str = parser.arg1()
+            if not parser.is_valid_label_name(location_name):
                 raise ValueError(f"Invalid label name: {location_name}")
-            writer._write_to_file(f"@{locations[location_name]}\n")
+            writer.write_label(location_name)
+        elif command == CommandType.C_GOTO:
+            location_name: str = parser.arg1()
+            writer._write_to_file(f"@{location_name}\n")
 
-            if arg1 == "if-goto":
+            if "if-goto" in parser.current_line:
                 writer._write_to_file("D;JNE\n")
             else: # Unconditional jump
                 writer._write_to_file("0;JMP\n")
-        else:
+        else: # It's an arithmetic command
             writer.writeArithmetic(command=arg1)
 
         parser.advance()  # Skip whitespace
 
-    writer._write_to_file(f"(END)\n@END\n0;JMP\n")  # Endless loop
+    writer.write_end_loop()
 
 
 if __name__ == "__main__":
