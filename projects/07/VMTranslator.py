@@ -1,6 +1,7 @@
 from absl import flags
 from typing import Dict
 import enum
+import re
 import sys
 
 
@@ -73,6 +74,12 @@ class Parser:
         else:  # TODO implement function
             raise ValueError("Invalid command type")
 
+    @staticmethod
+    def is_valid_label_name(label: str) -> bool:
+        """The label is a string composed of any sequence of letters, digits, underscore (_), dot (.), and colon (:) that does not begin with a digit."""
+        pattern = "^[a-zA-Z_.$:][a-zA-Z_.$:0-9]*$"
+        return bool(re.match(pattern, label))
+
     def arg1(self) -> str:
         """Returns the first argument of the current command."""
         command = self.command_type()
@@ -92,7 +99,9 @@ class Parser:
             CommandType.C_CALL,
         )
         return int(self.current_line.split()[2])
-
+    
+    def reset(self) -> None:
+        self.current_idx = 0
 
 _SEGMENTS: Dict[str, str] = {
     "local": "LCL",
@@ -111,13 +120,14 @@ class CodeWriter:
         # Delete file if it exists
         with open(self.filename, "w") as f:
             f.write("")  # Clear the file
-
+        self.written_lines: int = 0
         self.arithmetic_counter = 0
 
     def _write_to_file(self, content: str) -> None:
         """Writes the given content to the output file."""
         with open(self.filename, "a") as f:
             f.write(content)
+        self.written_lines += 1
 
     def _compute_target_address(self, segment: str, index: int) -> str:
         """Returns the assembly code that computes the target address
@@ -277,14 +287,12 @@ class CodeWriter:
         self.arithmetic_counter += 1
         self._write_to_file(output)
 
-
 _SOURCE = flags.DEFINE_string(
     "source",
     "",
     "File name to translate",
     short_name="s",
 )
-
 
 def __main__(args) -> None:
     # Parse the flags
@@ -296,6 +304,23 @@ def __main__(args) -> None:
         print("Loaded an empty file.")
         return None  # Empty file
 
+    # Find the labels and store their line numbers
+    locations: Dict[str, int] = defaultdict(int)
+    if parser.skip_line(parser.current_line):
+        parser.advance()
+    while parser.has_more_lines():
+        if parser.command_type() == CommandType.C_LABEL:
+            location_name: str = parser.arg2()
+            if not parser.is_valid_label_name(location_name):
+                raise ValueError(f"Invalid label name: {location_name}")
+            # Store the line number of the next instruction
+            locations[location_name] = parser.current_idx
+            del parser.lines[parser.current_idx]  # Remove the label
+        else: # Skip the line
+            parser.advance()
+    parser.reset() 
+
+    # Now we can start translating
     if parser.skip_line(parser.current_line):
         parser.advance()  # Skip the first line if it's a comment
     basename: str = _SOURCE.value.partition(".")[0]
@@ -306,10 +331,23 @@ def __main__(args) -> None:
         if command in (CommandType.C_POP, CommandType.C_PUSH):
             arg2 = parser.arg2()
             writer.writePushPop(command=command, segment=arg1, index=arg2)
+        else if command == CommandType.C_LABEL:
+            raise ValueError("There was a label even after the first pass? Bug.")
+        else if command == CommandType.C_GOTO:
+            location_name: str = parser.arg2()
+            if location_name not in locations:
+                raise ValueError(f"Invalid label name: {location_name}")
+            writer._write_to_file(f"@{locations[location_name]}\n")
+
+            if arg1 == "if-goto":
+                writer._write_to_file("D;JNE\n")
+            else: # Unconditional jump
+                writer._write_to_file("0;JMP\n")
         else:
             writer.writeArithmetic(command=arg1)
 
         parser.advance()  # Skip whitespace
+
     writer._write_to_file(f"(END)\n@END\n0;JMP\n")  # Endless loop
 
 
