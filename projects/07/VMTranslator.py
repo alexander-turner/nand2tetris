@@ -83,10 +83,14 @@ class Parser:
         return bool(re.match(pattern, label)) and not label == "END"
 
     @staticmethod
-    def basename(filename: str) -> str:
+    def _basename(filename: str) -> str:
         """Returns the basename."""
         assert filename.count(".") >= 1
         return filename.partition('.')[0]
+
+    @staticmethod 
+    def scoped_label(filename: str, label: str) -> str:
+        return f"{Parser._basename(filename)}.{label}"
 
     def arg1(self) -> str:
         """Returns the first argument of the current command."""
@@ -156,9 +160,9 @@ class CodeWriter:
             else:
                 raise ValueError("Invalid pointer index")
 
-        # Address a scoped label 
+        # Address a scoped label which we make for the static segment
         if segment == "static":
-            return f"@{Parser.basename(self.filename)}.{index}\n"
+            return scoped_label(self.filename, label=str(index))
 
         # Compute target address to move value to
         output = f"@{index}\nD=A\n"
@@ -339,8 +343,9 @@ def __main__(args) -> None:
         print("Loaded an empty file.")
         return None  # Empty file
 
-    basename: str = Parser.basename(_SOURCE.value)
-    writer = CodeWriter(basename + ".asm")
+    vm_filename = _SOURCE.value
+    asm_filename = vm_filename.replace(".vm", ".asm")
+    writer = CodeWriter(asm_filename)
 
     if parser.skip_line(parser.current_line):
         parser.advance()  # Skip the first line if it's a comment
@@ -351,17 +356,17 @@ def __main__(args) -> None:
         if command in (CommandType.C_POP, CommandType.C_PUSH):
             arg2 = parser.arg2()
             writer.write_push_pop(command=command, segment=arg1, index=arg2)
-        elif command == CommandType.C_LABEL:
-            location_name: str = parser.arg1()
-            if not parser.is_valid_label_name(location_name):
-                raise ValueError(f"Invalid label name: {location_name}")
-            writer.write_label(location_name)
-        elif command == CommandType.C_GOTO:
-            location_name: str = parser.arg1()
-            writer.write_goto(location_name)
-        elif command == CommandType.C_IF:
-            location_name: str = parser.arg1()
-            writer.write_if_goto(location_name)
+        elif command in (CommandType.C_LABEL, CommandType.C_GOTO, CommandType.C_IF):
+            label = parser.arg1()
+            scoped_label: str = parser.scoped_label(filename=writer.filename, label=label)
+            if not parser.is_valid_label_name(scoped_label):
+                raise ValueError(f"Invalid label name: {scoped_label}")
+            if command == CommandType.C_LABEL:
+                writer.write_label(scoped_label)
+            elif command == CommandType.C_GOTO:
+                writer.write_goto(scoped_label)
+            elif command == CommandType.C_IF:
+                writer.write_if_goto(scoped_label)
         elif command == CommandType.C_ARITHMETIC:
             writer.write_arithmetic(command=arg1)
         else:
