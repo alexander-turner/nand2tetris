@@ -73,7 +73,11 @@ class Parser:
             return CommandType.C_RETURN
         elif "call" in self.current_line:
             return CommandType.C_CALL
-        else:  # TODO implement function
+        elif "function" in self.current_line:
+            return CommandType.C_FUNCTION
+        elif "return" in self.current_line:
+            return CommandType.C_RETURN
+        else:  
             raise ValueError("Invalid command type")
 
     @staticmethod
@@ -356,7 +360,7 @@ def __main__(args) -> None:
         if command in (CommandType.C_POP, CommandType.C_PUSH):
             arg2 = parser.arg2()
             writer.write_push_pop(command=command, segment=arg1, index=arg2)
-        elif command in (CommandType.C_LABEL, CommandType.C_GOTO, CommandType.C_IF):
+        elif command in (CommandType.C_LABEL, Commandtype.C_GOTO, CommandType.C_IF):
             label = parser.arg1()
             scoped_label: str = parser.scoped_label(filename=writer.filename, label=label)
             if not parser.is_valid_label_name(scoped_label):
