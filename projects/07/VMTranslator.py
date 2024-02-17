@@ -327,6 +327,16 @@ class CodeWriter:
         )
         self._write_to_file(output)
 
+    def write_call(self, function_name: str, num_args: int) -> None:
+        """Call the given function, informing it that num_args were pushed to stack before the call."""
+        # First generate a label and write to asm 
+        scoped_function_name: str = Parser.scoped_label(filename=self.filename, label=function_name)
+        self.write_label(scoped_function_name)
+
+
+
+        raise NotImplementedError
+
     def write_end_loop(self) -> None:
         self._write_to_file(f"(END)\n@END\n0;JMP\n")
 
