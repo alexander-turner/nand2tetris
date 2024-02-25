@@ -1,5 +1,5 @@
 from absl import flags
-from typing import Dict
+from typing import Dict, Literal
 import enum
 import re
 import sys
@@ -59,8 +59,7 @@ class Parser:
         elif "label" in self.current_line:
             return CommandType.C_LABEL
         elif any(
-            x in self.current_line
-            for x in ["eq", "gt", "lt", "and", "or", "not"]
+            x in self.current_line for x in ["eq", "gt", "lt", "and", "or", "not"]
         ):
             return CommandType.C_ARITHMETIC
         elif "if-goto" in self.current_line:
@@ -77,7 +76,7 @@ class Parser:
             return CommandType.C_FUNCTION
         elif "return" in self.current_line:
             return CommandType.C_RETURN
-        else:  
+        else:
             raise ValueError("Invalid command type")
 
     @staticmethod
@@ -90,9 +89,9 @@ class Parser:
     def _basename(filename: str) -> str:
         """Returns the basename."""
         assert filename.count(".") >= 1
-        return filename.partition('.')[0]
+        return filename.partition(".")[0]
 
-    @staticmethod 
+    @staticmethod
     def scoped_label(filename: str, label: str) -> str:
         return f"{Parser._basename(filename)}.{label}"
 
@@ -115,9 +114,10 @@ class Parser:
             CommandType.C_CALL,
         )
         return int(self.current_line.split()[2])
-    
+
     def reset(self) -> None:
         self.current_idx = 0
+
 
 _SEGMENTS: Dict[str, str] = {
     "local": "LCL",
@@ -146,14 +146,13 @@ class CodeWriter:
         with open(self.filename, "a") as f:
             f.write(content)
 
-    def _compute_target_address(self, segment: str, index: int) -> str:
+    def _compute_target_address(
+        self, segment: str, index: int, register: Literal["D", "A", "M"] = "A"
+    ) -> str:
         """Returns the assembly code that computes the target address
-        in the segment given by segment and index. Sets it as the
-        current address."""
+        in the segment given by segment and index. Stores it in `register`."""
         assert (
-            segment in _SEGMENTS.keys()
-            or segment == "pointer"
-            or segment == "static"
+            segment in _SEGMENTS.keys() or segment == "pointer" or segment == "static"
         ), f"{segment} not valid"
 
         if segment == "pointer":
@@ -172,35 +171,51 @@ class CodeWriter:
         output = f"@{index}\nD=A\n"
         if segment == "temp":
             output += "@5\n"  # Starts at address 5
-            output += "A=A+D\n"
+            output += f"{register}=A+D\n"
         else:  # We're jumping to the address stored in the segment
             # Add to base address
             output += f"@{_SEGMENTS[segment]}\n"
-            output += "A=M+D\n"
+            output += f"{register}=M+D\n"
         return output
 
+    def _pop_cmds(self) -> str:
+        """Pops the top value off the stack and stores it in D. Decrements SP."""
+        return (
+            "@SP\n"  # Access SP
+            "M=M-1\n"  # Decrement SP
+            "A=M\n"  # Change address to old top of stack
+            "D=M\n"  # Pop old top value into D
+        )
+
+    def _push_cmds(self) -> str:
+        """Pushes the current contents of D onto the stack."""
+        return (
+            "@SP\n"  # Get RAM[SP]
+            "M=M+1\n"
+            "A=M-1\n"  # Get RAM[SP-1]
+            "M=D\n"  # Write to old top of stack
+        )
+
     def write_push_pop(
-        self, command: CommandType, segment: str, index: int
+        self,
+        command: Literal[CommandType.C_POP, CommandType.C_PUSH],
+        segment: str,
+        index: int,
     ) -> None:
         """Writes to the output file the assembly code that implements
         the given push/pop command."""
-        assert command in (CommandType.C_POP, CommandType.C_PUSH)
         if command == CommandType.C_POP:
             if segment == "constant":
                 return  # Ignore pop constant
-            # For pop, decrement SP, read the value, and store in
-            # segment-index
-            output = self._compute_target_address(segment, index)
+            # Store target address in R13
+            output = self._compute_target_address(segment, index, register="D")
             output += (
-                "D=A\n"
                 # Store target address in register 13
                 "@R13\n"
                 "M=D\n"
-                # Decrement SP
-                "@SP\n"
-                "M=M-1\n"
-                "A=M\n"  # Get RAM[SP]
-                "D=M\n"
+            )
+            output += self._pop_cmds()
+            output += (
                 # Retrieve target address
                 "@R13\n"
                 "A=M\n"
@@ -217,14 +232,9 @@ class CodeWriter:
                 )
             else:
                 output = (
-                    self._compute_target_address(segment, index) + "D=M\n"
+                    self._compute_target_address(segment, index, register="A") + "D=M\n"
                 )  # Read the value from segment-index
-            output += (
-                "@SP\n"  # Get RAM[SP]
-                "M=M+1\n"
-                "A=M-1\n"  # Get RAM[SP-1]
-                "M=D\n"  # Store value
-            )
+            output += self._push_cmds()
         self._write_to_file(output)
 
     def write_arithmetic(self, command: str) -> None:
@@ -317,28 +327,35 @@ class CodeWriter:
         """Writes the assembly code for an if-goto command that pops the top
         value off the stack and conditionally jumps to the specified label if
         the value is not zero."""
-        output = (
-            "@SP\n"         # Access SP
-            "M=M-1\n"      # Decrement SP and address top of stack
-            "A=M\n"         # Change address to old top of stack
-            "D=M\n"         # Pop old top value into D
-            f"@{location_name}\n"   # Load the label address
-            "D;JNE\n"       # Jump if D is not zero (conditional jump)
+        output = self._pop_cmds()
+        output += (
+            f"@{location_name}\n"  # Load the label address
+            "D;JNE\n"  # Jump if D is not zero (conditional jump)
         )
         self._write_to_file(output)
 
+    def write_function(self, function_name: str, num_vars: int) -> None:
+        raise NotImplementedError
+
     def write_call(self, function_name: str, num_args: int) -> None:
         """Call the given function, informing it that num_args were pushed to stack before the call."""
-        # First generate a label and write to asm 
-        scoped_function_name: str = Parser.scoped_label(filename=self.filename, label=function_name)
+        # First generate a label and write to asm
+        scoped_function_name: str = Parser.scoped_label(
+            filename=self.filename, label=function_name
+        )
         self.write_label(scoped_function_name)
 
+        # Push LCL
+        self._get_segment_address(segment="LCL", index=0, register="D")
 
+        raise NotImplementedError
 
+    def write_return(self) -> None:
         raise NotImplementedError
 
     def write_end_loop(self) -> None:
         self._write_to_file(f"(END)\n@END\n0;JMP\n")
+
 
 _SOURCE = flags.DEFINE_string(
     "source",
@@ -346,6 +363,7 @@ _SOURCE = flags.DEFINE_string(
     "File name to translate",
     short_name="s",
 )
+
 
 def __main__(args) -> None:
     # Parse the flags
@@ -366,13 +384,15 @@ def __main__(args) -> None:
     while parser.has_more_lines():
         command: CommandType = parser.command_type()
 
-        arg1 = parser.arg1()  # NOTE not handling return command type
+        arg1 = parser.arg1()
+        arg2 = parser.arg2()
         if command in (CommandType.C_POP, CommandType.C_PUSH):
-            arg2 = parser.arg2()
             writer.write_push_pop(command=command, segment=arg1, index=arg2)
         elif command in (CommandType.C_LABEL, Commandtype.C_GOTO, CommandType.C_IF):
             label = parser.arg1()
-            scoped_label: str = parser.scoped_label(filename=writer.filename, label=label)
+            scoped_label: str = parser.scoped_label(
+                filename=writer.filename, label=label
+            )
             if not parser.is_valid_label_name(scoped_label):
                 raise ValueError(f"Invalid label name: {scoped_label}")
             if command == CommandType.C_LABEL:
@@ -383,6 +403,12 @@ def __main__(args) -> None:
                 writer.write_if_goto(scoped_label)
         elif command == CommandType.C_ARITHMETIC:
             writer.write_arithmetic(command=arg1)
+        elif command == CommandType.C_FUNCTION:
+            writer.write_function(function_name=arg1, num_vars=arg2)
+        elif command == CommandType.C_CALL:
+            writer.write_call(function_name=arg1, num_args=arg2)
+        elif command == CommandType.C_RETURN:
+            writer.write_return()
         else:
             raise ValueError("Invalid command type")
 
