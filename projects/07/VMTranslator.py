@@ -334,7 +334,11 @@ class CodeWriter:
         self._write_to_file(output)
 
     def write_function(self, function_name: str, num_vars: int) -> None:
-        raise NotImplementedError
+        scoped_function_name: str = Parser.scoped_label(function_name, self.filename)
+        self.write_label(scoped_function_name)
+        for _ in range(num_vars):
+            # Initialize local variables to 0, since fn might not do on its own
+            self.write_push_pop(command=CommandType.C_PUSH, segment="constant", index=0)
 
     def write_call(self, function_name: str, num_args: int) -> None:
         """Call the given function, informing it that num_args were pushed to stack before the call."""
