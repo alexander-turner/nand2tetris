@@ -140,6 +140,7 @@ class CodeWriter:
         with open(self.filename, "w") as f:
             f.write("")  # Clear the file
         self.arithmetic_counter = 0
+        self.call_counter = 0
 
     def _write_to_file(self, content: str) -> None:
         """Writes the given content to the output file."""
@@ -178,23 +179,21 @@ class CodeWriter:
             output += f"{register}=M+D\n"
         return output
 
-    def _pop_cmds(self) -> str:
-        """Pops the top value off the stack and stores it in D. Decrements SP."""
-        return (
-            "@SP\n"  # Access SP
-            "M=M-1\n"  # Decrement SP
-            "A=M\n"  # Change address to old top of stack
-            "D=M\n"  # Pop old top value into D
-        )
+    """Pops the top value off the stack and stores it in D. Decrements SP."""
+    _pop_cmds: str = (
+        "@SP\n"  # Access SP
+        "M=M-1\n"  # Decrement SP
+        "A=M\n"  # Change address to old top of stack
+        "D=M\n"  # Pop old top value into D
+    )
 
-    def _push_cmds(self) -> str:
-        """Pushes the current contents of D onto the stack."""
-        return (
-            "@SP\n"  # Get RAM[SP]
-            "M=M+1\n"
-            "A=M-1\n"  # Get RAM[SP-1]
-            "M=D\n"  # Write to old top of stack
-        )
+    """Pushes the current contents of D onto the stack."""
+    _push_cmds: str = (
+        "@SP\n"  # Get RAM[SP]
+        "M=M+1\n"
+        "A=M-1\n"  # Get RAM[SP-1]
+        "M=D\n"  # Write to old top of stack
+    )
 
     def write_push_pop(
         self,
@@ -214,7 +213,7 @@ class CodeWriter:
                 "@R13\n"
                 "M=D\n"
             )
-            output += self._pop_cmds()
+            output += self._pop_cmds
             output += (
                 # Retrieve target address
                 "@R13\n"
@@ -234,7 +233,7 @@ class CodeWriter:
                 output = (
                     self._compute_target_address(segment, index, register="A") + "D=M\n"
                 )  # Read the value from segment-index
-            output += self._push_cmds()
+            output += self._push_cmds
         self._write_to_file(output)
 
     def write_arithmetic(self, command: str) -> None:
@@ -327,7 +326,7 @@ class CodeWriter:
         """Writes the assembly code for an if-goto command that pops the top
         value off the stack and conditionally jumps to the specified label if
         the value is not zero."""
-        output = self._pop_cmds()
+        output = self._pop_cmds
         output += (
             f"@{location_name}\n"  # Load the label address
             "D;JNE\n"  # Jump if D is not zero (conditional jump)
@@ -343,12 +342,47 @@ class CodeWriter:
         scoped_function_name: str = Parser.scoped_label(
             filename=self.filename, label=function_name
         )
-        self.write_label(scoped_function_name)
+        # QUESTION but how do we know to not reenter the called fn?
+        # Answer -- it gets included in the code after the goto. Address now lets other functions call this function
+        push_return_address: str = (
+            return_addr_str := f"@RETURN_ADDRESS{self.call_counter}\n" "D=A\n"
+        ) + self._push_cmds
 
-        # Push LCL
-        self._get_segment_address(segment="LCL", index=0, register="D")
+        # Push addresses onto stack
+        save_frame = ""
+        for segment in ("LCL", "ARG", "THIS", "THAT"):
+            save_frame += self._get_segment_address(
+                segment=segment, index=0, register="D"
+            )
+            save_frame += self._push_cmds
+        self._write_to_file(save_frame)
 
-        raise NotImplementedError
+        # Specify memory address for arguments to callee
+        set_arg: str = (
+            "@SP\n"
+            "D=M\n"  # Store SP in D
+            "@5\n"
+            "D=D-A\n"  # Store SP-5 in D
+            f"@{num_args}\n"
+            "D=D-A\n"  # Store SP-5-num_args in D
+            "@ARG\n"
+            "M=D\n"  # ARG = SP-5-num_args
+        )
+        self._write_to_file(set_arg)
+
+        # Specify where the local variables begin
+        set_lcl: str = (
+            "@SP\n"
+            "D=M\n"
+            "@LCL\n"
+            "M=D\n"  # LCL = SP
+        )
+        self._write_to_file(set_lcl)
+
+        self.write_goto(function_name)
+        self.write_label(return_addr_str)
+
+        self.call_counter += 1
 
     def write_return(self) -> None:
         raise NotImplementedError
