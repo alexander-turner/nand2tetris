@@ -89,7 +89,9 @@ class Parser:
     def _basename(filename: str) -> str:
         """Returns the basename."""
         assert filename.count(".") >= 1
-        return filename.partition(".")[0]
+        left_of_dot = filename.partition(".")[0]
+        right_of_slash = left_of_dot.split("/")[-1]
+        return right_of_slash
 
     @staticmethod
     def scoped_label(filename: str, label: str) -> str:
@@ -112,7 +114,7 @@ class Parser:
             CommandType.C_POP,
             CommandType.C_FUNCTION,
             CommandType.C_CALL,
-        )
+        ), f"Invalid command type: {command}"
         return int(self.current_line.split()[2])
 
     def reset(self) -> None:
@@ -166,7 +168,8 @@ class CodeWriter:
 
         # Address a scoped label which we make for the static segment
         if segment == "static":
-            return scoped_label(self.filename, label=str(index))
+            static_lab: str = Parser.scoped_label(self.filename, label=str(index))
+            return f"@{static_lab}\n"
 
         # Compute target address to move value to
         output = f"@{index}\nD=A\n"
@@ -243,6 +246,9 @@ class CodeWriter:
             output = "@SP\nM=M-1\n"  # Decrement SP
             output += "A=M\nD=M\n"  # Get RAM[SP] and store in D
 
+        scoped_end: str = Parser.scoped_label(
+            self.filename, f"END{self.arithmetic_counter}"
+        )
         if command in ("add", "sub"):
             output += "A=A-1\n"  # Get RAM[SP-1]
             output += (
@@ -277,7 +283,7 @@ class CodeWriter:
                 "@SP\n"  # If we jumped, the conditional is false
                 "A=M-1\n"  # Overwrite RAM[SP-1]
                 "M=0\n"
-                f"@END{self.arithmetic_counter}\n"  # Jump past the TRUE clause
+                f"@{scoped_end}\n"  # Jump past the TRUE clause
                 "0;JMP\n"
                 f"(TRUE{self.arithmetic_counter})\n"
                 "@SP\n"
@@ -310,7 +316,7 @@ class CodeWriter:
             raise ValueError("Invalid command type")
 
         if command not in ("add", "sub", "neg"):
-            output += f"(END{self.arithmetic_counter})\n"
+            output += f"({scoped_end})\n"
         self.arithmetic_counter += 1
         self._write_to_file(output)
 
@@ -334,7 +340,9 @@ class CodeWriter:
         self._write_to_file(output)
 
     def write_function(self, function_name: str, num_vars: int) -> None:
-        scoped_function_name: str = Parser.scoped_label(function_name, self.filename)
+        scoped_function_name: str = Parser.scoped_label(
+            filename=self.filename, label=function_name
+        )
         self.write_label(scoped_function_name)
         for _ in range(num_vars):
             # Initialize local variables to 0, since fn might not do on its own
@@ -348,15 +356,16 @@ class CodeWriter:
         )
         # QUESTION but how do we know to not reenter the called fn?
         # Answer -- it gets included in the code after the goto. Address now lets other functions call this function
-        push_return_address: str = (
-            return_addr_str := f"@RETURN_ADDRESS{self.call_counter}\n" "D=A\n"
-        ) + self._push_cmds
+        return_addr: str = f"{scoped_function_name}$ret.{self.call_counter}"
+        return_addr_out = f"@{return_addr}\n" + "D=A\n" + self._push_cmds
 
         # Push addresses onto stack
         save_frame = ""
-        for segment in ("LCL", "ARG", "THIS", "THAT"):
-            save_frame += self._get_segment_address(
-                segment=segment, index=0, register="D"
+        for idx, segment in zip(
+            (0, 0, 0, 1), ("local", "argument", "pointer", "pointer")
+        ):
+            save_frame += self._compute_target_address(
+                segment=segment, index=idx, register="D"
             )
             save_frame += self._push_cmds
         self._write_to_file(save_frame)
@@ -384,15 +393,69 @@ class CodeWriter:
         self._write_to_file(set_lcl)
 
         self.write_goto(function_name)
-        self.write_label(return_addr_str)
+        self.write_label(return_addr)
 
         self.call_counter += 1
 
     def write_return(self) -> None:
-        raise NotImplementedError
+        address_LCL: str = self._compute_target_address(
+            segment="local", index=0, register="A"
+        )
+        output = address_LCL + "D=A\n"  # Store LCL in D
+        output += "@frame\nM=D\n"  # Store LCL in temp var
+        self._write_to_file(output)
+
+        # Put the return address in another temp var
+        compute_return_addr: str = (
+            "@5\n"
+            "D=D-A\n"  # x = frame - 5
+            "@retAddr\n"
+            "M=D\n"  # retAddr = frame - 5
+        )
+        self._write_to_file(compute_return_addr)
+
+        # Sets the return value for the caller --- RAM[RAM[CALLEE_ARG]] = RAM[RAM[SP-1]]
+        # Has to do with ordering for Hack language --- the passed in args are where we want to
+        # put the return value, such that it's on top of the stack when we're done. We don't
+        # need them anymore anyways.
+        get_return_value: str = self._pop_cmds  # Stores return value in D
+        output = get_return_value + (
+            "@ARG\n"
+            "A=M\n"
+            "M=D\n"  # Store return value in RAM[ARG]
+        )
+        self._write_to_file(output)
+
+        # Reposition SP such that it points right after return value
+        output = (
+            "@ARG\n"
+            "D=M+1\n"
+            "@SP\n"
+            "M=D\n"  # Set the SP to ARG+1
+        )
+        self._write_to_file(output)
+
+        for offset, segment in zip(
+            (1, 2, 3, 4), ("THAT", "THIS", "ARG", "LCL")  # Memory offset from frame
+        ):
+            target: str = (
+                "@frame\n"
+                "D=M\n"
+                f"@{offset}\n"
+                "A=D-A\n"  # Go get the written frame address
+                "D=M\n"  # Record the value which was saved in the frame
+                f"@{segment}\n"
+                "M=D\n"  # Set the segment to the value we saved
+            )
+            self._write_to_file(target)
+
+        # Return to the caller after the call
+        self.write_goto("retAddr")
 
     def write_end_loop(self) -> None:
-        self._write_to_file(f"(END)\n@END\n0;JMP\n")
+        scoped_end: str = Parser.scoped_label(filename=self.filename, label="END")
+        self.write_label(scoped_end)
+        self.write_goto(scoped_end)
 
 
 _SOURCE = flags.DEFINE_string(
@@ -422,29 +485,28 @@ def __main__(args) -> None:
     while parser.has_more_lines():
         command: CommandType = parser.command_type()
 
-        arg1 = parser.arg1()
-        arg2 = parser.arg2()
         if command in (CommandType.C_POP, CommandType.C_PUSH):
-            writer.write_push_pop(command=command, segment=arg1, index=arg2)
-        elif command in (CommandType.C_LABEL, Commandtype.C_GOTO, CommandType.C_IF):
+            arg2 = parser.arg2()
+            writer.write_push_pop(command=command, segment=parser.arg1(), index=arg2)
+        elif command in (CommandType.C_LABEL, CommandType.C_GOTO, CommandType.C_IF):
             label = parser.arg1()
-            scoped_label: str = parser.scoped_label(
-                filename=writer.filename, label=label
-            )
-            if not parser.is_valid_label_name(scoped_label):
-                raise ValueError(f"Invalid label name: {scoped_label}")
+            scope_lab: str = parser.scoped_label(filename=writer.filename, label=label)
+            if not parser.is_valid_label_name(scope_lab):
+                raise ValueError(f"Invalid label name: {scope_lab}")
             if command == CommandType.C_LABEL:
-                writer.write_label(scoped_label)
+                writer.write_label(scope_lab)
             elif command == CommandType.C_GOTO:
-                writer.write_goto(scoped_label)
+                writer.write_goto(scope_lab)
             elif command == CommandType.C_IF:
-                writer.write_if_goto(scoped_label)
+                writer.write_if_goto(scope_lab)
         elif command == CommandType.C_ARITHMETIC:
-            writer.write_arithmetic(command=arg1)
+            writer.write_arithmetic(command=parser.arg1())
         elif command == CommandType.C_FUNCTION:
-            writer.write_function(function_name=arg1, num_vars=arg2)
+            arg2 = parser.arg2()
+            writer.write_function(function_name=parser.arg1(), num_vars=arg2)
         elif command == CommandType.C_CALL:
-            writer.write_call(function_name=arg1, num_args=arg2)
+            arg2 = parser.arg2()
+            writer.write_call(function_name=parser.arg1(), num_args=arg2)
         elif command == CommandType.C_RETURN:
             writer.write_return()
         else:
