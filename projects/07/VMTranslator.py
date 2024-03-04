@@ -1,6 +1,7 @@
 from absl import flags
 from typing import Dict, Literal
 import enum
+import os
 import re
 import sys
 
@@ -93,10 +94,6 @@ class Parser:
         right_of_slash = left_of_dot.split("/")[-1]
         return right_of_slash
 
-    @staticmethod
-    def scoped_label(filename: str, label: str) -> str:
-        return f"{Parser._basename(filename)}.{label}"
-
     def arg1(self) -> str:
         """Returns the first argument of the current command."""
         command = self.command_type()
@@ -133,16 +130,35 @@ _SEGMENTS: Dict[str, str] = {
 class CodeWriter:
     """Translates VM commands into Hack assembly code."""
 
-    def __init__(self, output_filename: str) -> None:
+    def __init__(self, output_filename: str, processing_filename: str = "") -> None:
         self.filename = output_filename
+        self.processing_filename = processing_filename
+
+        # Note where we are in the current directory
         self.reset()
+
+        init_stack_pointer: str = (
+            "@256\n"  # Load 256 into D
+            "D=A\n"
+            "@SP\n"
+            "M=D\n"  # Set SP to 256
+        )
+        self._write_to_file(init_stack_pointer)
+        self.write_call("Sys.init", 0)
+
+    def scoped_label(self, label: str) -> str:
+        basename: str = os.path.basename(self.processing_filename)
+        return f"{basename}.{label}"
 
     def reset(self) -> None:
         # Delete file if it exists
         with open(self.filename, "w") as f:
             f.write("")  # Clear the file
         self.arithmetic_counter = 0
-        self.call_counter = 0
+        self.call_counter = 0  # TODO when else is this set to 0?
+
+    def process_new_file(self, filename: str) -> None:
+        self.processing_filename = filename
 
     def _write_to_file(self, content: str) -> None:
         """Writes the given content to the output file."""
@@ -168,7 +184,7 @@ class CodeWriter:
 
         # Address a scoped label which we make for the static segment
         if segment == "static":
-            static_lab: str = Parser.scoped_label(self.filename, label=str(index))
+            static_lab: str = self.scoped_label(label=str(index))
             return f"@{static_lab}\n"
 
         # Compute target address to move value to
@@ -186,7 +202,7 @@ class CodeWriter:
     _pop_cmds: str = (
         "@SP\n"  # Access SP
         "M=M-1\n"  # Decrement SP
-        "A=M\n"  # Change address to old top of stack
+        "A=M\n"  # Change address to former top value
         "D=M\n"  # Pop old top value into D
     )
 
@@ -246,9 +262,7 @@ class CodeWriter:
             output = "@SP\nM=M-1\n"  # Decrement SP
             output += "A=M\nD=M\n"  # Get RAM[SP] and store in D
 
-        scoped_end: str = Parser.scoped_label(
-            self.filename, f"END{self.arithmetic_counter}"
-        )
+        scoped_end: str = self.scoped_label(label=f"END{self.arithmetic_counter}")
         if command in ("add", "sub"):
             output += "A=A-1\n"  # Get RAM[SP-1]
             output += (
@@ -340,9 +354,7 @@ class CodeWriter:
         self._write_to_file(output)
 
     def write_function(self, function_name: str, num_vars: int) -> None:
-        scoped_function_name: str = Parser.scoped_label(
-            filename=self.filename, label=function_name
-        )
+        scoped_function_name: str = self.scoped_label(label=function_name)
         self.write_label(scoped_function_name)
         for _ in range(num_vars):
             # Initialize local variables to 0, since fn might not do on its own
@@ -350,14 +362,13 @@ class CodeWriter:
 
     def write_call(self, function_name: str, num_args: int) -> None:
         """Call the given function, informing it that num_args were pushed to stack before the call."""
-        # First generate a label and write to asm
-        scoped_function_name: str = Parser.scoped_label(
-            filename=self.filename, label=function_name
-        )
+        scoped_function_name: str = self.scoped_label(label=function_name)
+
         # QUESTION but how do we know to not reenter the called fn?
         # Answer -- it gets included in the code after the goto. Address now lets other functions call this function
-        return_addr: str = f"{scoped_function_name}$ret.{self.call_counter}"
+        return_addr: str = f"{scoped_function_name}$ret{self.call_counter}"
         return_addr_out = f"@{return_addr}\n" + "D=A\n" + self._push_cmds
+        self._write_to_file(return_addr_out)
 
         # Push addresses onto stack
         save_frame = ""
@@ -383,6 +394,7 @@ class CodeWriter:
         )
         self._write_to_file(set_arg)
 
+        # TODO somehow this hits -300?
         # Specify where the local variables begin
         set_lcl: str = (
             "@SP\n"
@@ -392,18 +404,18 @@ class CodeWriter:
         )
         self._write_to_file(set_lcl)
 
-        self.write_goto(function_name)
+        # What if we call x.zero from module y? Won't have correct goto TODO
+        self.write_goto(scoped_function_name)
         self.write_label(return_addr)
 
         self.call_counter += 1
 
     def write_return(self) -> None:
         address_LCL: str = self._compute_target_address(
-            segment="local", index=0, register="A"
+            segment="local", index=0, register="D"
         )
-        output = address_LCL + "D=A\n"  # Store LCL in D
-        output += "@frame\nM=D\n"  # Store LCL in temp var
-        self._write_to_file(output)
+        address_LCL += "@frame\nM=D\n"  # Store LCL in temp var
+        self._write_to_file(address_LCL)
 
         # Put the return address in another temp var
         compute_return_addr: str = (
@@ -442,8 +454,8 @@ class CodeWriter:
                 "@frame\n"
                 "D=M\n"
                 f"@{offset}\n"
-                "A=D-A\n"  # Go get the written frame address
-                "D=M\n"  # Record the value which was saved in the frame
+                "A=D-A\n"  # Go get the written frame address (LCL - offset)
+                "D=M\n"  # Record the value which was saved in the frame register
                 f"@{segment}\n"
                 "M=D\n"  # Set the segment to the value we saved
             )
@@ -453,35 +465,31 @@ class CodeWriter:
         self.write_goto("retAddr")
 
     def write_end_loop(self) -> None:
-        scoped_end: str = Parser.scoped_label(filename=self.filename, label="END")
-        self.write_label(scoped_end)
-        self.write_goto(scoped_end)
+        self.write_label("END")
+        self.write_goto("END")
 
 
 _SOURCE = flags.DEFINE_string(
     "source",
     "",
-    "File name to translate",
+    "File (or directory of files) to translate",
+    required=False,
     short_name="s",
 )
 
 
-def __main__(args) -> None:
-    # Parse the flags
-    flags.FLAGS(args)
-
-    parser = Parser(source=_SOURCE.value)
+def _parse_and_write_file(vm_filename: str, writer: CodeWriter) -> None:
+    """Parses the file and writes the assembly code to the output file."""
+    parser = Parser(source=vm_filename)
+    writer.process_new_file(filename=vm_filename)  # Change the scopes
 
     if not parser.has_more_lines():
         print("Loaded an empty file.")
         return None  # Empty file
 
-    vm_filename = _SOURCE.value
-    asm_filename = vm_filename.replace(".vm", ".asm")
-    writer = CodeWriter(asm_filename)
-
     if parser.skip_line(parser.current_line):
         parser.advance()  # Skip the first line if it's a comment
+
     while parser.has_more_lines():
         command: CommandType = parser.command_type()
 
@@ -490,7 +498,7 @@ def __main__(args) -> None:
             writer.write_push_pop(command=command, segment=parser.arg1(), index=arg2)
         elif command in (CommandType.C_LABEL, CommandType.C_GOTO, CommandType.C_IF):
             label = parser.arg1()
-            scope_lab: str = parser.scoped_label(filename=writer.filename, label=label)
+            scope_lab: str = parser.scoped_label(label=label)
             if not parser.is_valid_label_name(scope_lab):
                 raise ValueError(f"Invalid label name: {scope_lab}")
             if command == CommandType.C_LABEL:
@@ -514,6 +522,26 @@ def __main__(args) -> None:
 
         parser.advance()  # Skip whitespace
 
+
+def __main__(args) -> None:
+    # Parse the flags
+    flags.FLAGS(args)
+
+    vm_filenames: List[str] = [_SOURCE.value]
+    output_filename = f"{_SOURCE.value}.asm"
+
+    # If dir, make list of files to read and an output filename
+    if os.path.isdir(_SOURCE.value):
+        vm_filenames = os.listdir(_SOURCE.value)
+        vm_filenames = list(filter(lambda f: f.endswith(".vm"), vm_filenames))
+
+        # Get basename of the directory
+        basename: str = os.path.basename(_SOURCE.value)
+        output_filename = os.path.join(_SOURCE.value, f"{basename}.asm")
+
+    writer = CodeWriter(output_filename=output_filename, processing_filename="")
+    for vm_filename in vm_filenames:
+        _parse_and_write_file(vm_filename, writer=writer)
     writer.write_end_loop()
 
 
