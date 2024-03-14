@@ -13,7 +13,9 @@ TokenType = enum.StrEnum('TokenType', 'KEYWORD SYMBOL IDENTIFIER INT_CONST STRIN
 
 Keyword = enum.StrEnum('Keyword', 'CLASS METHOD FUNCTION CONSTRUCTOR INT BOOLEAN CHAR VOID VAR STATIC FIELD LET DO IF ELSE WHILE RETURN TRUE FALSE NULL THIS')
 
-
+_SYMBOLS = ('{', '}', '(', ')', '[', ']', '.', ',', ';', '+', '-', '*', '/', '&', '|', '<', '>', '=', '~')
+_INTEGERS = range(32768)
+_IDENTIFIER_SEP: tuple(str) = (',', ']', ')', ';', '{', ' ', '.')
 
 def _is_str_constant(s: str) -> bool:
     """Determines whether the string representation of a proposed token is a string constant."""
@@ -25,9 +27,6 @@ def _is_str_constant(s: str) -> bool:
         c.isprintable() and c not in ('"', "\n") for c in s[1:-1]
     )
     return sandwiched_by_quotes and valid_intermediate_chars
-
-
-_IDENTIFIER_SEP: tuple(str) = (',', ']', ')', ';', '{', ' ', '.')
 
 def _is_identifier(s: str) -> bool:
     """Determines whether the string representation of a proposed token is an identifier."""
@@ -50,8 +49,6 @@ class JackTokenizer:
         cleaned_lines: list[str] = self._remove_comments(self.lines)
         cleaned_lines = self._remove_whitespace(cleaned_lines)
         self.remaining_text = " ".join(self.cleaned_lines)
-
-        raise NotImplementedError
 
     @staticmethod
     def _remove_comments(lines: List[str]) -> List[str]:
@@ -92,7 +89,7 @@ class JackTokenizer:
         elif self.remaining_text[0].isdigit(): # Integer constant
             next_idx: int = self.remaining_text.index(" ")
             implied_int_str: str = self.remaining_text[:next_idx]
-            if not implied_int_str.isdigit() or int(implied_int) not in INTEGERS:
+            if not implied_int_str.isdigit() or int(implied_int) not in _INTEGERS:
                 raise ValueError(f"Invalid integer constant: {implied_int_str}")
             self.current_token_str = implied_int_str
         else: # Identifier
@@ -110,29 +107,49 @@ class JackTokenizer:
 
     def token_type(self) -> TokenType:
         """Returns the type of the current token."""
-        return TokenType[self.current_token_str.upper()]
+        if self.current_token_str in _SYMBOLS:
+            return TerminalTokenType.SYMBOL
+        elif self.current_token_str in Keyword:
+            return TerminalTokenType.KEYWORD
+        elif _is_str_constant(self.current_token_str):
+            return TerminalTokenType.STRING_CONST
+        elif _is_identifier(self.current_token_str):
+            return TerminalTokenType.IDENTIFIER
+        elif self.current_token_str.isdigit() and int(self.current_token_str) in _INTEGERS:
+            return TerminalTokenType.INT_CONST
+        else:
+            raise ValueError(f"Unrecognized token: {self.current_token_str}")
+        
 
     def keyword(self) -> str:
         """Returns the keyword which is the current token."""
         if self.token_type() != TerminalTokenType.KEYWORD:
             raise ValueError("Current token is not a keyword.")
-        return 
+        return Keyword[self.current_token_str.upper()]
 
     def symbol(self) -> str:
         """Returns the character which is the current token."""
-        pass
+        if self.token_type() != TerminalTokenType.SYMBOL:
+            raise ValueError("Current token is not a symbol.")
+        return self.current_token_str
 
     def identifier(self) -> str:
         """Returns the identifier which is the current token."""
-        pass
+        if self.token_type() != TerminalTokenType.IDENTIFIER:
+            raise ValueError("Current token is not an identifier.")
+        return self.current_token_str
 
     def int_val(self) -> int:
         """Returns the integer value of the current token."""
-        pass
+        if self.token_type() != TerminalTokenType.INT_CONST:
+            raise ValueError("Current token is not an integer constant.")
+        return int(self.current_token_str)
 
     def string_val(self) -> str:
-        """Returns the string value of the current token."""
-        pass
+        """Returns the string value of the current token, without the surrounding quotes."""
+        if self.token_type() != TerminalTokenType.STRING_CONST:
+            raise ValueError("Current token is not a string constant.")
+        return self.current_token_str[1:-1]
 
 
 def token_xml(token: str, type: TokenType) -> str:
