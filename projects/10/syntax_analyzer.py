@@ -1,5 +1,6 @@
+import enum
 from absl import flags
-from typing import List, Literal
+from typing import List, Literal, Tuple
 import os
 import sys
 import re
@@ -9,13 +10,39 @@ _SOURCE = flags.DEFINE_string(
     name="source", help="Name of file or folder to analyze.", default=None
 )
 
-TokenType = enum.StrEnum('TokenType', 'KEYWORD SYMBOL IDENTIFIER INT_CONST STRING_CONST')
+TokenType = enum.StrEnum(
+    "TokenType", "KEYWORD SYMBOL IDENTIFIER INT_CONST STRING_CONST"
+)
 
-Keyword = enum.StrEnum('Keyword', 'CLASS METHOD FUNCTION CONSTRUCTOR INT BOOLEAN CHAR VOID VAR STATIC FIELD LET DO IF ELSE WHILE RETURN TRUE FALSE NULL THIS')
+Keyword = enum.StrEnum(
+    "Keyword",
+    "CLASS METHOD FUNCTION CONSTRUCTOR INT BOOLEAN CHAR VOID VAR STATIC FIELD LET DO IF ELSE WHILE RETURN TRUE FALSE NULL THIS",
+)
 
-_SYMBOLS = ('{', '}', '(', ')', '[', ']', '.', ',', ';', '+', '-', '*', '/', '&', '|', '<', '>', '=', '~')
+_SYMBOLS = (
+    "{",
+    "}",
+    "(",
+    ")",
+    "[",
+    "]",
+    ".",
+    ",",
+    ";",
+    "+",
+    "-",
+    "*",
+    "/",
+    "&",
+    "|",
+    "<",
+    ">",
+    "=",
+    "~",
+)
 _INTEGERS = range(32768)
-_IDENTIFIER_SEP: tuple(str) = (',', ']', ')', ';', '{', ' ', '.')
+_IDENTIFIER_SEP: Tuple[str] = (",", "]", ")", ";", "{", " ", ".")
+
 
 def _is_str_constant(s: str) -> bool:
     """Determines whether the string representation of a proposed token is a string constant."""
@@ -28,6 +55,7 @@ def _is_str_constant(s: str) -> bool:
     )
     return sandwiched_by_quotes and valid_intermediate_chars
 
+
 def _is_identifier(s: str) -> bool:
     """Determines whether the string representation of a proposed token is an identifier."""
     if not s:
@@ -39,20 +67,19 @@ def _is_identifier(s: str) -> bool:
 
 
 class JackTokenizer:
-    def __init__(self, filename: str):
+    def __init__(self, lines: list[str] | str):
         """Open the input file/stream and get ready to parse it."""
-        self.filename = filename
-        with open(filename, "r") as f:
-            self.lines = f.readlines()
+        if isinstance(lines, str):
+            self.lines = lines.split("\n")
 
         # Preprocess lines to remove comments and whitespace
-        cleaned_lines: list[str] = self._remove_comments(self.lines)
-        cleaned_lines = self._remove_whitespace(cleaned_lines)
-        self.remaining_text = " ".join(self.cleaned_lines)
+        cleaned_lines: list[str] = list(map(self._remove_comments, self.lines))
+        cleaned_lines = list(map(self._trim_whitespace, cleaned_lines))
+        self.remaining_text = " ".join(cleaned_lines)
 
     @staticmethod
-    def _remove_comments(lines: List[str]) -> List[str]:
-        """Remove comments from lines of code, replacing with a single space."""
+    def _remove_comments(original_line: str) -> str:
+        """Remove comments and replace them with a single space."""
 
         def replace_line_comment(line: str) -> str:
             return re.sub(r"//.*", " ", line)
@@ -60,13 +87,12 @@ class JackTokenizer:
         def replace_block_comment(line: str) -> str:
             return re.sub(r"/\*\*?.*\*/", " ", line, flags=re.DOTALL)
 
-        no_lines = list(map(replace_line_comment, lines))
-        return list(map(replace_block_comment, no_lines))
+        return replace_block_comment(replace_line_comment(original_line))
 
     @staticmethod
-    def _remove_whitespace(lines: List[str]) -> List[str]:
-        """Remove whitespace from lines of code."""
-        return [re.sub(r"\s+", " ", line).strip() for line in lines]
+    def _trim_whitespace(line: str) -> str:
+        """Remove extra whitespace, leaving tokens separated by a single space."""
+        return re.sub(r"\s+", " ", line).strip()
 
     def has_more_tokens(self) -> bool:
         """Are there more tokens in the input?"""
@@ -74,25 +100,25 @@ class JackTokenizer:
 
     def advance(self):
         """Read the next token from the input and make it the current token."""
-        for token_str in token_mapping.keys()
+        for token_str in _SYMBOLS + list(Keyword):
             if self.remaining_text.startswith(token_str):
                 self.current_token_str = token_str
-                self.remaining_text = self.remaining_text[len(token_str):]
+                self.remaining_text = self.remaining_text[len(token_str) :]
                 return
-        
-        if self.remaining_text[0] == '"': # String constant
+
+        if self.remaining_text[0] == '"':  # String constant
             next_idx: int = self.remaining_text.index('"', 1)
             implied_str = self.remaining_text[1:next_idx]
             if not _is_str_constant(implied_str):
                 raise ValueError(f"Invalid string constant: {implied_str}")
             self.current_token_str = '"' + implied_str + '"'
-        elif self.remaining_text[0].isdigit(): # Integer constant
+        elif self.remaining_text[0].isdigit():  # Integer constant
             next_idx: int = self.remaining_text.index(" ")
             implied_int_str: str = self.remaining_text[:next_idx]
             if not implied_int_str.isdigit() or int(implied_int) not in _INTEGERS:
                 raise ValueError(f"Invalid integer constant: {implied_int_str}")
             self.current_token_str = implied_int_str
-        else: # Identifier
+        else:  # Identifier
             # Find the next separator
             next_idx = len(self.remaining_text)
             for sep in _IDENTIFIER_SEP:
@@ -103,7 +129,6 @@ class JackTokenizer:
                 raise ValueError(f"Invalid identifier: {implied_id}")
             self.current_token_str = implied_id
         self.remaining_text = self.remaining_text[next_idx:]
-        
 
     def token_type(self) -> TokenType:
         """Returns the type of the current token."""
@@ -115,11 +140,13 @@ class JackTokenizer:
             return TerminalTokenType.STRING_CONST
         elif _is_identifier(self.current_token_str):
             return TerminalTokenType.IDENTIFIER
-        elif self.current_token_str.isdigit() and int(self.current_token_str) in _INTEGERS:
+        elif (
+            self.current_token_str.isdigit()
+            and int(self.current_token_str) in _INTEGERS
+        ):
             return TerminalTokenType.INT_CONST
         else:
             raise ValueError(f"Unrecognized token: {self.current_token_str}")
-        
 
     def keyword(self) -> str:
         """Returns the keyword which is the current token."""
@@ -164,7 +191,7 @@ class SyntaxParser:
             lines = lines.split("\n")
         # Remove comments and whitespace
         no_comments: List[str] = self._remove_comments(lines)
-        lines: List[str] = self._remove_whitespace(no_comments)
+        lines: List[str] = self._trim_whitespace(no_comments)
 
         single_line = " ".join(lines)
         # These can still contain compound statements, which we'll need to handle
@@ -188,7 +215,7 @@ if __name__ == "__main__":
         print(f"Analyzing {file}...")
         with open(file, "r") as f:
             lines = f.readlines()
-        Parser = SyntaxParser(lines)
+        Parser = JackTokenizer(lines)
 
         basename = file.partition(".jack")[0]
         # with open(basename + ".xml", "w"):
