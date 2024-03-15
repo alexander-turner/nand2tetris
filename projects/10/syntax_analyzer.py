@@ -85,7 +85,7 @@ class JackTokenizer:
             return re.sub(r"//.*", " ", line)
 
         def replace_block_comment(line: str) -> str:
-            return re.sub(r"/\*\*?.*\*/", " ", line, flags=re.DOTALL)
+            return re.sub(r"/\*\*?.*?\*/", " ", line, flags=re.DOTALL)
 
         return replace_block_comment(replace_line_comment(original_line))
 
