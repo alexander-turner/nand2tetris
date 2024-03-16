@@ -16,8 +16,8 @@ class TestJackTokenizer:
         ],
     )
     def test_trim_whitespace(self, original: str, new: str):
-        Parser = syntax_analyzer.JackTokenizer("")
-        assert Parser._trim_whitespace(original) == new
+        tokenizer = syntax_analyzer.JackTokenizer("")
+        assert tokenizer._trim_whitespace(original) == new
 
     @pytest.mark.parametrize(
         "original, new",
@@ -33,5 +33,45 @@ class TestJackTokenizer:
         ],
     )
     def test_remove_comments(self, original: str, new: str):
-        Parser = syntax_analyzer.JackTokenizer("")
-        assert Parser._remove_comments(original) == new
+        tokenizer = syntax_analyzer.JackTokenizer("")
+        assert tokenizer._remove_comments(original) == new
+
+    @pytest.mark.parametrize(
+        "original, truth_val",
+        [
+            ("1 + 2", True),
+            ("1 + 2 // Comment", True),
+            ("1 + 2 /* Comment \n Comment */", True),
+            ("1 + 2 /* Comment \n Comment */", True),
+            ("xab/**csfdsa fas\n */", True),
+            ("//Comment", False),
+            ("/* Comment */", False),
+            (
+                "/* Comment \n Comment */",
+                False,
+            ),  # TODO for some reason this fails? just removes \n
+            ("/* Comment \n Comment */ 1 + 2", True),
+            ("/* Comment \n Comment */ 1 + 2 /* Comment \n Comment */", True),
+        ],
+    )
+    def test_has_more_tokens(self, original: str, truth_val: bool) -> None:
+        tokenizer = syntax_analyzer.JackTokenizer(original)
+        assert tokenizer.has_more_tokens() == truth_val, tokenizer.remaining_text
+
+    @pytest.mark.parametrize(
+        "original, target",
+        [
+            ("1 + 2", "1"),
+            (" + 2", "+"),
+            (" 2", "2"),
+            ("  1  ", "1"),
+            ("xab ALBERT", "xab"),
+            ("5123 31 !!", "5123"),
+            ("_FDAV( ", "_FDAV"),
+            ("var{", "var"),
+        ],
+    )
+    def test_advance(self, original: str, target: str) -> None:
+        tokenizer = syntax_analyzer.JackTokenizer(original)
+        tokenizer.advance()
+        assert tokenizer.current_token_str == target

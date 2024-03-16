@@ -41,7 +41,7 @@ _SYMBOLS = (
     "~",
 )
 _INTEGERS = range(32768)
-_IDENTIFIER_SEP: Tuple[str] = (",", "]", ")", ";", "{", " ", ".")
+_IDENTIFIER_SEP: Tuple[str] = (",", "(", "]", ")", ";", "{", " ", ".")
 
 
 def _is_str_constant(s: str) -> bool:
@@ -62,7 +62,7 @@ def _is_identifier(s: str) -> bool:
         raise ValueError("Empty strings cannot be identifiers.")
 
     not_digit_start = not s[0].isdigit()
-    valid_chars = all(c.isalnum() or c == "_" for c in s)
+    valid_chars = all([c.isalnum() or c == "_" for c in s])
     return not_digit_start and valid_chars
 
 
@@ -73,9 +73,8 @@ class JackTokenizer:
             self.lines = lines.split("\n")
 
         # Preprocess lines to remove comments and whitespace
-        cleaned_lines: list[str] = list(map(self._remove_comments, self.lines))
-        cleaned_lines = list(map(self._trim_whitespace, cleaned_lines))
-        self.remaining_text = " ".join(cleaned_lines)
+        text: str = " ".join(self.lines)
+        self.remaining_text = self._trim_whitespace(self._remove_comments(text))
 
     @staticmethod
     def _remove_comments(original_line: str) -> str:
@@ -98,9 +97,16 @@ class JackTokenizer:
         """Are there more tokens in the input?"""
         return self.remaining_text != ""
 
+    def _index_or_end(self, pattern: str) -> int:
+        """Return the index of the first instance of pattern in the remaining text, or the length of the remaining text."""
+        try:
+            return self.remaining_text.index(pattern)
+        except ValueError:
+            return len(self.remaining_text)
+
     def advance(self):
         """Read the next token from the input and make it the current token."""
-        for token_str in _SYMBOLS + list(Keyword):
+        for token_str in list(_SYMBOLS) + list(Keyword):
             if self.remaining_text.startswith(token_str):
                 self.current_token_str = token_str
                 self.remaining_text = self.remaining_text[len(token_str) :]
@@ -113,9 +119,9 @@ class JackTokenizer:
                 raise ValueError(f"Invalid string constant: {implied_str}")
             self.current_token_str = '"' + implied_str + '"'
         elif self.remaining_text[0].isdigit():  # Integer constant
-            next_idx: int = self.remaining_text.index(" ")
+            next_idx: int = self._index_or_end(" ")
             implied_int_str: str = self.remaining_text[:next_idx]
-            if not implied_int_str.isdigit() or int(implied_int) not in _INTEGERS:
+            if not implied_int_str.isdigit() or int(implied_int_str) not in _INTEGERS:
                 raise ValueError(f"Invalid integer constant: {implied_int_str}")
             self.current_token_str = implied_int_str
         else:  # Identifier
