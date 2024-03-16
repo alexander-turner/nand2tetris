@@ -46,10 +46,7 @@ class TestJackTokenizer:
             ("xab/**csfdsa fas\n */", True),
             ("//Comment", False),
             ("/* Comment */", False),
-            (
-                "/* Comment \n Comment */",
-                False,
-            ),  # TODO for some reason this fails? just removes \n
+            ("/* Comment \n Comment */", False),
             ("/* Comment \n Comment */ 1 + 2", True),
             ("/* Comment \n Comment */ 1 + 2 /* Comment \n Comment */", True),
         ],
@@ -69,9 +66,22 @@ class TestJackTokenizer:
             ("5123 31 !!", "5123"),
             ("_FDAV( ", "_FDAV"),
             ("var{", "var"),
+            ('"Hi!"', '"Hi!"'),
+            *[(s, s) for s in syntax_analyzer._SYMBOLS],
         ],
     )
     def test_advance(self, original: str, target: str) -> None:
         tokenizer = syntax_analyzer.JackTokenizer(original)
         tokenizer.advance()
-        assert tokenizer.current_token_str == target
+
+        token_str = tokenizer.current_token_str
+        assert token_str == target
+
+        # Assert the remaining text is as expected
+        next_idx: int = len(token_str)
+        assert tokenizer.remaining_text == original.strip()[next_idx:]
+
+    def test_token_type(
+        self, original: str, tok_type: syntax_analyzer.TokenType
+    ) -> None:
+        pass

@@ -113,11 +113,11 @@ class JackTokenizer:
                 return
 
         if self.remaining_text[0] == '"':  # String constant
-            next_idx: int = self.remaining_text.index('"', 1)
-            implied_str = self.remaining_text[1:next_idx]
+            next_idx: int = self.remaining_text.index('"', 1) + 1
+            implied_str = self.remaining_text[:next_idx]  # Quote-inclusive
             if not _is_str_constant(implied_str):
                 raise ValueError(f"Invalid string constant: {implied_str}")
-            self.current_token_str = '"' + implied_str + '"'
+            self.current_token_str = implied_str  # QUESTION should we strip the quotes?
         elif self.remaining_text[0].isdigit():  # Integer constant
             next_idx: int = self._index_or_end(" ")
             implied_int_str: str = self.remaining_text[:next_idx]
@@ -189,21 +189,6 @@ def token_xml(token: str, type: TokenType) -> str:
     return f"<{type}> {token} </{type}>"
 
 
-class SyntaxParser:
-
-    def __init__(self, lines: str | List[str]):
-        """Given lines of code, preprocess them and set initial position."""
-        if isinstance(lines, str):
-            lines = lines.split("\n")
-        # Remove comments and whitespace
-        no_comments: List[str] = self._remove_comments(lines)
-        lines: List[str] = self._trim_whitespace(no_comments)
-
-        single_line = " ".join(lines)
-        # These can still contain compound statements, which we'll need to handle
-        self.proto_tokens = single_line.split()
-
-
 if __name__ == "__main__":
     # Parse flags
     FLAGS(sys.argv)
@@ -221,8 +206,14 @@ if __name__ == "__main__":
         print(f"Analyzing {file}...")
         with open(file, "r") as f:
             lines = f.readlines()
-        Parser = JackTokenizer(lines)
+        tokenizer = JackTokenizer(lines)
+
+        output: str = ""
+        while tokenizer.has_more_tokens():
+            tokenizer.advance()
+            token: str = tokenizer.current_token_str
+            token_type: TokenType = tokenizer.token_type()
 
         basename = file.partition(".jack")[0]
-        # with open(basename + ".xml", "w"):
-        #     f.write(parsed_lines)
+        with open(basename + ".xml", "w"):
+            f.write(parsed_lines)
