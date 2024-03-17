@@ -135,7 +135,7 @@ class TestJackTokenizer:
             *glob.glob("ArrayTest/*.jack"),
         ],
     )
-    def test_cmp_written_output(self, filename: str) -> None:
+    def test_cmp_tokenized_output(self, filename: str) -> None:
         with open(filename, "r") as f:
             lines = f.readlines()
         tokenizer = syntax_analyzer.JackTokenizer(lines)

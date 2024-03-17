@@ -17,6 +17,7 @@ TokenType = enum.StrEnum(
     "TokenType", "KEYWORD SYMBOL IDENTIFIER INT_CONST STRING_CONST"
 )
 
+
 Keyword = enum.StrEnum(
     "Keyword",
     "CLASS METHOD FUNCTION CONSTRUCTOR INT BOOLEAN CHAR VOID VAR STATIC FIELD LET DO IF ELSE WHILE RETURN TRUE FALSE NULL THIS",
@@ -214,23 +215,33 @@ class JackTokenizer:
                         to_write = self.string_val(tok)
                     case _:
                         raise ValueError(f"Unrecognized token: {self.tokens[idx]}")
-                to_write = token_xml(token=to_write, tok_type=tok_type) + "\n"
-                f.write(to_write)
+                to_write = _escape_xml(to_write)
+                to_write = token_xml(token=to_write, tok_type=tok_type)
+                f.write(to_write + "\n")
 
             f.write("\n</tokens>")
 
 
 def _escape_xml(xml_string: str) -> str:
-    # TODO get escape sequences for " and &
-    conversion_mapping = {"<": "&lt", ">": "&gt", '"': '"', "&": "&"}
-    escaped_str = re.sub(r"<", "&lt", xml_string)
-    escaped_str = re.sub(r">", "&gt", escaped_str)
-    escaped_str = re.sub(r'"', '"', escaped_str)  # TODO
-    return re.sub(r"&", "&", escaped_str)  # TODO
+    escaped_str = str(xml_string)
+    for pattern, target in (
+        (r"&", "&amp;"),
+        (r"<", "&lt;"),
+        (r">", "&gt;"),
+        (r'"', "&qt;"),  # TODO get escape sequence
+    ):
+        escaped_str = re.sub(pattern, target, escaped_str)
+    return escaped_str
 
 
 def token_xml(token: str, tok_type: TokenType) -> str:
-    return f"<{tok_type}> {token} </{tok_type}>"
+    if tok_type == TokenType.STRING_CONST:
+        tok_type_str = "stringConstant"
+    elif tok_type == TokenType.INT_CONST:
+        tok_type_str = "integerConstant"
+    else:
+        tok_type_str = str(tok_type)
+    return f"<{tok_type_str}> {token} </{tok_type_str}>"
 
 
 class CompilationEngine:
