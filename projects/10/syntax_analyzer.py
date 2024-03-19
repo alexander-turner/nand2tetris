@@ -1,7 +1,7 @@
 import enum
 from absl import flags
 import logging
-from typing import List, Literal, Tuple, Sequence
+from typing import List, Literal, Tuple, Iterable
 import os
 import sys
 import re
@@ -152,7 +152,8 @@ class JackTokenizer:
                 next_idx = min(next_idx, self.remaining_text.index(sep))
         return self.remaining_text[:next_idx]
 
-    def token_type(self, token_str: str) -> TokenType:
+    @staticmethod
+    def token_type(token_str: str) -> TokenType:
         """Returns the type of the current token."""
         if token_str in _SYMBOLS:
             return TokenType.SYMBOL
@@ -167,59 +168,77 @@ class JackTokenizer:
         else:
             raise ValueError(f"Unrecognized token: {token_str}")
 
-    def keyword(self, token_str: str) -> str:
+    @staticmethod
+    def keyword(token_str: str) -> str:
         """Returns the keyword which is the current token."""
-        if self.token_type(token_str) != TokenType.KEYWORD:
+        if JackTokenizer.token_type(token_str) != TokenType.KEYWORD:
             raise ValueError("Current token is not a keyword.")
         return Keyword[token_str.upper()]
 
-    def symbol(self, token_str: str) -> str:
+    @staticmethod
+    def symbol(token_str: str) -> str:
         """Returns the character which is the current token."""
-        if self.token_type(token_str) != TokenType.SYMBOL:
+        if JackTokenizer.token_type(token_str) != TokenType.SYMBOL:
             raise ValueError("Current token is not a symbol.")
         return token_str
 
-    def identifier(self, token_str: str) -> str:
+    @staticmethod
+    def identifier(token_str: str) -> str:
         """Returns the identifier which is the current token."""
-        if self.token_type(token_str) != TokenType.IDENTIFIER:
+        if JackTokenizer.token_type(token_str) != TokenType.IDENTIFIER:
             raise ValueError("Current token is not an identifier.")
         return token_str
 
-    def int_val(self, token_str: str) -> int:
+    @staticmethod
+    def int_val(token_str: str) -> int:
         """Returns the integer value of the current token."""
-        if self.token_type(token_str) != TokenType.INT_CONST:
+        if JackTokenizer.token_type(token_str) != TokenType.INT_CONST:
             raise ValueError("Current token is not an integer constant.")
         return int(token_str)
 
-    def string_val(self, token_str: str) -> str:
+    @staticmethod
+    def string_val(token_str: str) -> str:
         """Returns the string value of the current token, without the surrounding quotes."""
-        if self.token_type(token_str) != TokenType.STRING_CONST:
+        if JackTokenizer.token_type(token_str) != TokenType.STRING_CONST:
             raise ValueError("Current token is not a string constant.")
         return token_str[1:-1]
+
+    @staticmethod
+    def token_val(token: str) -> str | int:
+        tok_type = JackTokenizer.token_type(token)
+        match tok_type:
+            case TokenType.KEYWORD:
+                to_return = JackTokenizer.keyword(token)
+            case TokenType.SYMBOL:
+                to_return = JackTokenizer.symbol(token)
+            case TokenType.IDENTIFIER:
+                to_return = JackTokenizer.identifier(token)
+            case TokenType.INT_CONST:
+                to_return = JackTokenizer.int_val(token)
+            case TokenType.STRING_CONST:
+                to_return = JackTokenizer.string_val(token)
+            case _:
+                raise ValueError(f"Unrecognized token: {token}")
+        return to_return
 
     def write_tokens(self, filename: str) -> None:
         with open(filename, "w") as f:
             f.write("<tokens>\n")
-            for tok in self.tokens:
-                tok_type = self.token_type(tok)
-                match tok_type:
-                    case TokenType.KEYWORD:
-                        to_write = self.keyword(tok)
-                    case TokenType.SYMBOL:
-                        to_write = self.symbol(tok)
-                    case TokenType.IDENTIFIER:
-                        to_write = self.identifier(tok)
-                    case TokenType.INT_CONST:
-                        to_write = self.int_val(tok)
-                    case TokenType.STRING_CONST:
-                        to_write = self.string_val(tok)
-                    case _:
-                        raise ValueError(f"Unrecognized token: {self.tokens[idx]}")
-                to_write = _escape_xml(to_write)
-                to_write = token_xml(token=to_write, tok_type=tok_type)
-                f.write(to_write + "\n")
+        for tok in self.tokens:
+            self.write_token(filename, tok)
 
+        with open(filename, "a") as f:
             f.write("\n</tokens>")
+
+    @staticmethod
+    def write_token(filename: str, token: Iterable[str]) -> None:
+        with open(filename, "a") as f:
+            tok_type = JackTokenizer.token_type(token)
+            tok_val = JackTokenizer.token_val(token)
+
+            to_write = _escape_xml(tok_val)
+            to_write = token_xml(token=to_write, tok_type=tok_type)
+            f.write(to_write + "\n")
 
 
 def _escape_xml(xml_string: str) -> str:
@@ -228,7 +247,7 @@ def _escape_xml(xml_string: str) -> str:
         (r"&", "&amp;"),
         (r"<", "&lt;"),
         (r">", "&gt;"),
-        (r'"', "&qt;"),  # TODO get escape sequence
+        (r'"', "&quot;"),
     ):
         escaped_str = re.sub(pattern, target, escaped_str)
     return escaped_str
@@ -245,18 +264,37 @@ def token_xml(token: str, tok_type: TokenType) -> str:
 
 
 class CompilationEngine:
-    def __init__(self, input_tokens: Sequence[str], output_filename: str) -> None:
+    def __init__(self, input_tokens: Iterable[str], output_filename: str) -> None:
         self.tokens = input_tokens
         self.output_filename = output_filename
+
+    def _write(self, s: str) -> None:
+        with open(self.output_filename, "a") as f:
+            f.write(s)
+
+    def _write_token(self, token: str) -> None:
+        tok_type = JackTokenizer.token_type(token)
+        tok_val = JackTokenizer.token_val(token)
+
+    @property
+    def current_token(self) -> str:
+        return self.tokens[0]
+
+    def increment_token(self) -> None:
+        self.tokens = self.tokens[1:]
 
     def compile_class(self) -> None:
         """Compiles a complete class."""
         # 'class' className '{' class_var_dec* subroutine_dec* '}'
+        assert self.current_token == "class"
+
+        self.increment_token()
 
         raise NotImplementedError
 
     def compile_class_var_dec(self) -> None:
         """Compiles a static variable declaration, or a field declaration."""
+        raise NotImplementedError
 
 
 if __name__ == "__main__":
