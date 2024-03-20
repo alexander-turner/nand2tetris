@@ -1,7 +1,8 @@
 import enum
 from absl import flags
+import functools
 import logging
-from typing import List, Literal, Tuple, Iterable, Collection
+from typing import List, Literal, Tuple, Iterable, Collection, Callable
 import os
 import sys
 import re
@@ -300,6 +301,8 @@ class CompilationEngine:
     def compile_class(self) -> None:
         """Compiles a complete class."""
         # 'class' className '{' class_var_dec* subroutine_dec* '}'
+        self._write("<class>")
+
         self._error_or_write_target("class")
         self._error_or_write_type(TokenType.IDENTIFIER)
         self._error_or_write_target("{")
@@ -313,12 +316,15 @@ class CompilationEngine:
                 break
 
         self._error_or_write_target("}")
+        self._write("</class>")
 
     def compile_class_var_dec(self) -> None:
         """Compiles a static variable declaration, or a field declaration.
 
         Grammar: ('static' | 'field') type varName (',' varName)* ';'
         """
+        self._write("<classVarDec>")
+
         self._error_or_write_target(("static", "field"))
         self.compile_type()
         self._error_or_write_type(TokenType.IDENTIFIER)
@@ -327,6 +333,7 @@ class CompilationEngine:
             self._error_or_write_type(TokenType.IDENTIFIER)
 
         self._error_or_write_target(";")
+        self._write("</classVarDec>")
 
     def compile_type(self) -> None:
         """Compiles a type. Grammar: 'int' | 'char' | 'boolean' | className."""
@@ -338,6 +345,7 @@ class CompilationEngine:
     def compile_subroutine(self) -> None:
         """Compiles a complete method, function, or constructor."""
         # ('constructor' | 'function' | 'method') ('void' | type) subroutineName '(' parameterList ')' subroutineBody
+        self._write("<subroutineDec>")
         self._error_or_write_target(("constructor", "function", "method"))
 
         if self.current_token == "void":
@@ -350,10 +358,12 @@ class CompilationEngine:
         self.compile_parameter_list()
         self._error_or_write_target(")")
         self.compile_subroutine_body()
+        self._write("</subroutineDec>")
 
     def compile_parameter_list(self) -> None:
         """Compiles a (possibly empty) parameter list."""
         # ( (type varName) (',' type varName)* )?
+        self._write("<parameterList>")
         if self.current_token == ")":  # No parameters
             return
 
@@ -363,15 +373,20 @@ class CompilationEngine:
             self._error_or_write_target(",")
             self.compile_type()
             self._error_or_write_type(TokenType.IDENTIFIER)
+        self._write("</parameterList>")
 
     def compile_subroutine_body(self) -> None:
         """Compiles a subroutine's body."""
         # '{' varDec* statements '}'
+        self._write("<subroutineBody>")
+
         self._error_or_write_target("{")
         while self.current_token == "var":
             self.compile_var_dec()
         self.compile_statements()
         self._error_or_write_target("}")
+
+        self._write("</subroutineBody>")
 
     def compile_var_dec(self) -> None:
         """Compiles a var declaration."""
@@ -385,6 +400,7 @@ class CompilationEngine:
         self._error_or_write_target(";")
 
     def compile_statements(self) -> None:
+        self._write("<statements>")
         while self.current_token in ("let", "if", "while", "do", "return"):
             match self.current_token:
                 case "let":
@@ -397,10 +413,13 @@ class CompilationEngine:
                     self.compile_do()
                 case "return":
                     self.compile_return()
+        self._write("</statements>")
 
     def compile_let(self) -> None:
         """Compiles a let statement."""
         # 'let' varName ('[' expression ']')? '=' expression ';'
+        self._write("<letStatement>")
+
         self._error_or_write_target("let")
         self._error_or_write_type(TokenType.IDENTIFIER)
         if self.current_token == "[":
@@ -411,9 +430,13 @@ class CompilationEngine:
         self.compile_expression()
         self._error_or_write_target(";")
 
+        self._write("</letStatement>")
+
     def compile_if(self) -> None:
         """Compiles an if statement."""
         # 'if' '(' expression ')' '{' statements '}' ('else' '{' statements '}')?
+        self._write("<ifStatement>")
+
         self._error_or_write_target("if")
         self._error_or_write_target("(")
         self.compile_expression()
@@ -427,9 +450,13 @@ class CompilationEngine:
             self.compile_statements()
             self._error_or_write_target("}")
 
+        self._write("</ifStatement>")
+
     def compile_while(self) -> None:
         """Compiles a while statement."""
         # 'while' '(' expression ')' '{' statements '}'
+        self._write("<whileStatement>")
+
         self._error_or_write_target("while")
         self._error_or_write_target("(")
         self.compile_expression()
@@ -438,32 +465,43 @@ class CompilationEngine:
         self.compile_statements()
         self._error_or_write_target("}")
 
+        self._write("</whileStatement>")
+
     def compile_do(self) -> None:
         """Compiles a do statement."""
         # 'do' subroutineCall ';'
+        self._write("<doStatement>")
+
         self._error_or_write_target("do")
         self.compile_subroutine_call()
         self._error_or_write_target(";")
 
+        self._write("</doStatement>")
+
     def compile_return(self) -> None:
         """Compiles a return statement."""
         # 'return' expression? ';'
+        self._write("<returnStatement>")
         self._error_or_write_target("return")
         if self.current_token != ";":
             self.compile_expression()
         self._error_or_write_target(";")
+        self._write("</returnStatement>")
 
     def compile_expression(self) -> None:
         """Compiles an expression."""
         # term (op term)*
+        self._write("<expression>")
         self.compile_term()
         while self.current_token in _OPS:
             self._error_or_write_target(_OPS)
             self.compile_term()
+        self._write("</expression>")
 
     def compile_term(self) -> None:
         """Compiles a term."""
         # integerConstant | stringConstant | keywordConstant | varName | varName '[' expression ']' | subroutineCall | '(' expression ')' | unaryOp term
+        self._write("<term>")
         current_type: TokenType = JackTokenizer.token_type(self.current_token)
 
         # NOTE assumes at least 2 tokens remaining
@@ -500,6 +538,8 @@ class CompilationEngine:
         else:
             raise ValueError(f"Invalid term: {self.current_token}")
 
+        self._write("</term>")
+
     def compile_subroutine_call(self) -> None:
         self._error_or_write_type(TokenType.IDENTIFIER)
         if self.current_token == ".":
@@ -513,12 +553,14 @@ class CompilationEngine:
 
     def compile_expression_list(self) -> None:
         """Compiles a (possibly empty) comma-separated list of expressions."""
+        self._write("<expressionList>")
         if self.current_token == ")":
             return
         self.compile_expression()
         while self.current_token == ",":
             self._error_or_write_target(",")
             self.compile_expression()
+        self._write("</expressionList>")
 
 
 if __name__ == "__main__":
