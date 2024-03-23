@@ -1,8 +1,36 @@
 import pytest
+from typing import Tuple
+import frozendict
 import glob
+import pyfakefs
 import logging
 import re
 import syntax_analyzer
+
+_FILES_TO_OPEN: Tuple[str, ...] = (
+    *glob.glob("Square/*.jack"),
+    *glob.glob("ExpressionLessSquare/*.jack"),
+    *glob.glob("ArrayTest/*.jack"),
+)
+
+# Get the .jack files
+_JACK_TEXTS = frozendict.frozendict(
+    {filename: open(filename, "r").read() for filename in _FILES_TO_OPEN}
+)
+# Get the T.xml files
+_TARGET_TOKENIZED_TEXTS = frozendict.frozendict(
+    {
+        filename: open(filename.replace(".jack", "T.xml"), "r").read()
+        for filename in _FILES_TO_OPEN
+    }
+)
+# Get the .xml files
+_TARGET_TEXTS = frozendict.frozendict(
+    {
+        filename: open(filename.replace(".jack", ".xml"), "r").read()
+        for filename in _FILES_TO_OPEN
+    }
+)
 
 
 class TestJackTokenizer:
@@ -129,15 +157,13 @@ class TestJackTokenizer:
 
     @pytest.mark.parametrize(
         "filename",
-        [
-            *glob.glob("Square/*.jack"),
-            *glob.glob("ExpressionLessSquare/*.jack"),
-            *glob.glob("ArrayTest/*.jack"),
-        ],
+        _FILES_TO_OPEN,
     )
-    def test_cmp_tokenized_output(self, filename: str) -> None:
-        with open(filename, "r") as f:
-            lines = f.readlines()
+    def test_cmp_tokenized_output(self, filename: str, fs) -> None:
+        lines = _JACK_TEXTS[filename]
+        target_text: str = _TARGET_TOKENIZED_TEXTS[filename]
+        filename = filename.partition("/")[-1]  # fakefs has no directories
+
         tokenizer = syntax_analyzer.JackTokenizer(lines)
         while tokenizer.has_more_tokens():
             tokenizer.advance()
@@ -145,46 +171,41 @@ class TestJackTokenizer:
         user_generated_filename = filename.replace(".jack", "-user-T.xml")
         tokenizer.write_tokens(user_generated_filename)
 
-        target_filename = filename.replace(".jack", "T.xml")
-        with open(target_filename, "r") as f:
-            target_text = f.read()
-
         with open(user_generated_filename, "r") as f:
             user_text = f.read()
 
-        logging.debug(user_text)
         assert _cmp_ignore_whitespace(target_text, user_text), f"{filename=}"
 
     @pytest.mark.parametrize(
         "filename",
-        [
-            *glob.glob("Square/*.jack"),
-            *glob.glob("ExpressionLessSquare/*.jack"),
-            *glob.glob("ArrayTest/*.jack"),
-        ],
+        _FILES_TO_OPEN,
     )
-    def test_cmp_engine_output(self, filename: str) -> None:
-        with open(filename, "r") as f:
-            lines = f.readlines()
+    def test_cmp_engine_output(self, filename: str, fs) -> None:
+        lines = _JACK_TEXTS[filename]
+        target_text: str = _TARGET_TEXTS[filename]
+        filename = filename.partition("/")[-1]  # fakefs has no directories
+
         tokenizer = syntax_analyzer.JackTokenizer(lines)
         while tokenizer.has_more_tokens():
             tokenizer.advance()
 
         user_generated_filename = filename.replace(".jack", "-user.xml")
-        tokenizer.write_tokens(user_generated_filename)
-
-        target_filename = filename.replace(".jack", ".xml")
-        with open(target_filename, "r") as f:
-            target_text = f.read()
+        engine = syntax_analyzer.CompilationEngine(
+            tokenizer.tokens, user_generated_filename
+        )
+        engine.compile_class()
 
         with open(user_generated_filename, "r") as f:
             user_text = f.read()
 
-        logging.debug(user_text)
         assert _cmp_ignore_whitespace(target_text, user_text), f"{filename=}"
 
 
 def _cmp_ignore_whitespace(s1: str, s2: str) -> bool:
     s1_no_whitespace = re.sub(r"\s+", "", s1)
     s2_no_whitespace = re.sub(r"\s+", "", s2)
+    for idx, (ch1, ch2) in enumerate(zip(s1_no_whitespace, s2_no_whitespace)):
+        if ch1 != ch2:
+            raise Exception(f"{idx=}: {ch1=} != {ch2=}")
+            # logging.error(f"{idx=}: {ch1=} != {ch2=}")
     return s1_no_whitespace == s2_no_whitespace
